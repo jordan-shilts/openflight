@@ -127,6 +127,11 @@ tilt when the rig is placed on uneven ground.
 | **JST-SH cable kit (Qwiic-to-Dupont)** | Qwiic/STEMMA QT to female Dupont jumpers, used in the validated build. The LIS3DH plugs into its STEMMA QT socket and the Dupont ends push straight onto the Pi GPIO header, so no soldering is needed — the alternative is soldering a header onto the breakout and wiring that by hand | [Amazon](https://www.amazon.com/Connector-Compatible-Development-Sensors-Drivers/dp/B0GJPRX4YT) | ~$10 |
 | **Qwiic-to-Dupont cable (single)** | Mouser-stocked equivalent of the kit above: one JST-SH 4-pin to female Dupont cable, 150 mm (SparkFun CAB-17261 / Mouser 474-CAB-17261, in the shared Mouser project; Adafruit 4397 is the same cable direct). Enough on its own for the LIS3DH → Pi header run, and it keeps the inclinometer orderable from Mouser. 150 mm is the only length made in this configuration — the shorter Qwiic cables have no Dupont end. Plug it into the LIS3DH socket nearer the Pi ([Cable lengths](#cable-lengths-enclosure-v3)) | [Mouser](https://www.mouser.com/ProductDetail/SparkFun-Electronics/CAB-17261?qs=DRkmTr78QAQLJE%2FDhtP97Q%3D%3D) / [Amazon](https://www.amazon.com/dp/B0992PHLBC) / [Adafruit 4397](https://www.adafruit.com/product/4397) | ~$2 |
 
+A generic **LSM6DS3 / LSM6DS3TR-C breakout** also works if the LIS3DH is out of
+stock. OpenFlight auto-detects either chip. Those boards have header pins instead
+of a STEMMA QT socket, so wire them with four female-to-female jumpers. See
+[Alternative: LSM6DS3 Breakout](../build/inclinometer.md#alternative-lsm6ds3-breakout).
+
 See the **[LIS3DH Inclinometer Setup Guide](../build/inclinometer.md)** for wiring,
 mounting, calibration, startup flags, and troubleshooting.
 

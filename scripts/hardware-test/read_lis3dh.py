@@ -1,24 +1,29 @@
 #!/usr/bin/env python3
-"""Print LIS3DH acceleration, enclosure pitch, and optional effective TI tilt."""
+"""Print LIS3DH/LSM6DS3 acceleration, enclosure pitch, and optional effective TI tilt."""
 
 import argparse
 import time
 
-from openflight.inclinometer import LIS3DH
+from openflight.inclinometer import detect_accelerometer
 from openflight.inclinometer.service import pitch_degrees
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bus", type=int, default=1, help="I2C bus number (default: 1)")
-    parser.add_argument("--address", type=lambda value: int(value, 0), default=0x18)
+    parser.add_argument(
+        "--address",
+        type=lambda value: int(value, 0),
+        default=None,
+        help="I2C address to probe (default: auto-detect LIS3DH 0x18/0x19, LSM6DS3 0x6a/0x6b)",
+    )
     parser.add_argument("--interval", type=float, default=0.25)
     parser.add_argument("--count", type=int, default=0, help="Readings to print; 0 runs forever")
     parser.add_argument(
         "--zero-offset-deg",
         type=float,
         default=0.0,
-        help="Degrees added to raw LIS3DH pitch (default: 0)",
+        help="Degrees added to raw inclinometer pitch (default: 0)",
     )
     parser.add_argument(
         "--iwr6843-tilt-deg",
@@ -28,9 +33,9 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    sensor = LIS3DH(bus_number=args.bus, address=args.address)
+    sensor = detect_accelerometer(bus_number=args.bus, address=args.address)
     sensor.initialize()
-    print(f"LIS3DH detected on I2C-{args.bus} at 0x{args.address:02x}")
+    print(f"{sensor.NAME.upper()} detected on I2C-{args.bus} at 0x{sensor.address:02x}")
     try:
         index = 0
         while args.count == 0 or index < args.count:

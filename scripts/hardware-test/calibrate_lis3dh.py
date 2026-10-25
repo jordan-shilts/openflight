@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
-"""Average a stationary LIS3DH and print its recommended zero-offset flag."""
+"""Average a stationary LIS3DH/LSM6DS3 and print its recommended zero-offset flag."""
 
 import argparse
 import statistics
 import time
 
-from openflight.inclinometer import LIS3DH
+from openflight.inclinometer import detect_accelerometer
 from openflight.inclinometer.service import pitch_degrees
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bus", type=int, default=1)
-    parser.add_argument("--address", type=lambda value: int(value, 0), default=0x18)
+    parser.add_argument(
+        "--address",
+        type=lambda value: int(value, 0),
+        default=None,
+        help="I2C address to probe (default: auto-detect LIS3DH 0x18/0x19, LSM6DS3 0x6a/0x6b)",
+    )
     parser.add_argument("--samples", type=int, default=50)
     parser.add_argument("--interval", type=float, default=0.1)
     parser.add_argument(
@@ -25,7 +30,7 @@ def main() -> None:
     if args.samples < 2:
         parser.error("--samples must be at least 2")
 
-    sensor = LIS3DH(bus_number=args.bus, address=args.address)
+    sensor = detect_accelerometer(bus_number=args.bus, address=args.address)
     sensor.initialize()
     pitches = []
     try:

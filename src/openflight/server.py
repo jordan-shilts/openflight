@@ -136,7 +136,7 @@ camera_replay_manager = None
 camera_reference_ball_tracker = None
 camera_ball_flight_reference_tracker = None
 
-# Optional LIS3DH enclosure orientation used to compensate TI mount tilt.
+# Optional LIS3DH/LSM6DS3 enclosure orientation used to compensate TI mount tilt.
 inclinometer_service = None
 inclinometer_runtime_config: dict = {"enabled": False}
 
@@ -1196,42 +1196,52 @@ def _iwr6843_startup_recovery(error: object) -> str:
     return "Check the TI radar USB and power connections, then relaunch OpenFlight."
 
 
-def init_inclinometer(*, zero_offset_deg: float, bus_number: int = 1, address: int = 0x18) -> bool:
-    """Start the optional LIS3DH service without risking radar availability."""
+def init_inclinometer(
+    *, zero_offset_deg: float, bus_number: int = 1, address: int | None = None
+) -> bool:
+    """Start the optional LIS3DH/LSM6DS3 service without risking radar availability.
+
+    With ``address`` left as None, every supported chip address is probed.
+    """
     global inclinometer_service  # pylint: disable=global-statement
     global inclinometer_runtime_config  # pylint: disable=global-statement
 
+    requested_address = "auto" if address is None else f"0x{address:02x}"
     service = None
+    sensor = None
     try:
-        from .inclinometer import LIS3DH, InclinometerService
+        from .inclinometer import InclinometerService, detect_accelerometer
 
-        service = InclinometerService(
-            LIS3DH(bus_number=bus_number, address=address),
-            zero_offset_deg=zero_offset_deg,
-        )
+        sensor = detect_accelerometer(bus_number=bus_number, address=address)
+        service = InclinometerService(sensor, zero_offset_deg=zero_offset_deg)
         service.start()
         startup = service.wait_for_stable(timeout_s=2.0)
         inclinometer_service = service
         inclinometer_runtime_config = {
             "enabled": True,
-            "sensor": "lis3dh",
+            "sensor": sensor.NAME,
             "i2c_bus": bus_number,
-            "i2c_address": f"0x{address:02x}",
+            "i2c_address": f"0x{sensor.address:02x}",
             "sample_hz": service.sample_hz,
             "zero_offset_deg": zero_offset_deg,
             "startup": startup.to_dict(),
         }
+        sensor_label = sensor.NAME.upper()
         if startup.snapshot is None:
             logger.warning(
-                "[SERVER] LIS3DH initialized but has no stable startup reading (%s)",
+                "[SERVER] %s initialized but has no stable startup reading (%s)",
+                sensor_label,
                 startup.status,
             )
-            print(f"Inclinometer enabled, waiting for a stable reading ({startup.status})")
+            print(
+                f"Inclinometer ({sensor_label}) enabled, "
+                f"waiting for a stable reading ({startup.status})"
+            )
             return True
 
         snapshot = startup.snapshot
         print(
-            "Inclinometer enabled "
+            f"Inclinometer ({sensor_label} at 0x{sensor.address:02x}) enabled "
             f"(raw pitch {snapshot.raw_pitch_deg:+.2f}deg, "
             f"calibrated {snapshot.calibrated_pitch_deg:+.2f}deg)"
         )
@@ -1244,25 +1254,27 @@ def init_inclinometer(*, zero_offset_deg: float, bus_number: int = 1, address: i
             )
         return True
     except Exception as error:  # pylint: disable=broad-exception-caught
-        if service is not None:
-            try:
+        try:
+            if service is not None:
                 service.stop()
-            except Exception:  # pylint: disable=broad-exception-caught
-                logger.debug("Failed to close LIS3DH after initialization error", exc_info=True)
+            elif sensor is not None:
+                sensor.close()
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.debug("Failed to close inclinometer after initialization error", exc_info=True)
         logger.warning("[SERVER] Inclinometer initialization failed: %s", error, exc_info=True)
         log_session_error(
             "Inclinometer initialization failed",
             component="inclinometer",
-            context={"i2c_bus": bus_number, "i2c_address": f"0x{address:02x}"},
+            context={"i2c_bus": bus_number, "i2c_address": requested_address},
             exc=error,
         )
         inclinometer_service = None
         inclinometer_runtime_config = {
             "enabled": False,
             "requested": True,
-            "sensor": "lis3dh",
+            "sensor": sensor.NAME if sensor is not None else "auto",
             "i2c_bus": bus_number,
-            "i2c_address": f"0x{address:02x}",
+            "i2c_address": (f"0x{sensor.address:02x}" if sensor is not None else requested_address),
             "zero_offset_deg": zero_offset_deg,
             "error": str(error),
         }
@@ -3800,7 +3812,7 @@ def start_monitor(
             )
         if not mock and inclinometer_service is not None:
             session_logger.log_connection(
-                device="lis3dh",
+                device=inclinometer_runtime_config.get("sensor", "lis3dh"),
                 port=f"i2c-{inclinometer_runtime_config.get('i2c_bus', 1)}",
                 baud=0,
                 address=inclinometer_runtime_config.get("i2c_address", "0x18"),
@@ -4463,13 +4475,13 @@ def main():
     parser.add_argument(
         "--inclinometer",
         action="store_true",
-        help="Enable LIS3DH enclosure pitch compensation for IWR6843 tilt",
+        help="Enable LIS3DH or LSM6DS3 enclosure pitch compensation for IWR6843 tilt (auto-detected)",
     )
     parser.add_argument(
         "--inclinometer-zero-offset",
         type=float,
         default=0.0,
-        help="Degrees added to raw LIS3DH pitch (default: 0)",
+        help="Degrees added to raw inclinometer pitch (default: 0)",
     )
     parser.add_argument(
         "--iwr6843-port", default=None, help="TI serial port (auto-detect by default)"

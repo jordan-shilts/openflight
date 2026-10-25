@@ -77,12 +77,12 @@ The supported angle radar.
 
 ## Inclinometer
 
-LIS3DH enclosure tilt compensation.
+LIS3DH or LSM6DS3 enclosure tilt compensation.
 
 | Flag | Type / default | Description |
 | --- | --- | --- |
-| `--inclinometer` | flag | Enable LIS3DH enclosure pitch compensation for IWR6843 tilt |
-| `--inclinometer-zero-offset` | float | Degrees added to raw LIS3DH pitch (default: 0) |
+| `--inclinometer` | flag | Enable LIS3DH or LSM6DS3 enclosure pitch compensation for IWR6843 tilt (chip auto-detected) |
+| `--inclinometer-zero-offset` | float | Degrees added to raw inclinometer pitch (default: 0) |
 
 ## Ballistics & spin
 

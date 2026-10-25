@@ -1,4 +1,4 @@
-"""Server integration for per-shot LIS3DH tilt compensation."""
+"""Server integration for per-shot LIS3DH/LSM6DS3 tilt compensation."""
 
 import json
 import math
@@ -104,8 +104,8 @@ def test_server_preserves_configured_tilt_without_stable_snapshot(monkeypatch):
 
 def test_init_inclinometer_is_fail_soft(monkeypatch):
     class BrokenSensor:
-        def __init__(self, **_kwargs):
-            pass
+        NAME = "lis3dh"
+        address = 0x18
 
     class BrokenService:
         def __init__(self, _sensor, **_kwargs):
@@ -117,7 +117,9 @@ def test_init_inclinometer_is_fail_soft(monkeypatch):
         def stop(self):
             pass
 
-    monkeypatch.setattr("openflight.inclinometer.LIS3DH", BrokenSensor)
+    monkeypatch.setattr(
+        "openflight.inclinometer.detect_accelerometer", lambda **_kwargs: BrokenSensor()
+    )
     monkeypatch.setattr("openflight.inclinometer.InclinometerService", BrokenService)
     monkeypatch.setattr(server, "log_session_error", lambda *_args, **_kwargs: None)
 
@@ -125,6 +127,85 @@ def test_init_inclinometer_is_fail_soft(monkeypatch):
     assert server.inclinometer_service is None
     assert server.inclinometer_runtime_config["requested"] is True
     assert server.inclinometer_runtime_config["error"] == "I2C unavailable"
+    assert server.inclinometer_runtime_config["sensor"] == "lis3dh"
+    assert server.inclinometer_runtime_config["i2c_address"] == "0x18"
+
+
+def test_init_inclinometer_is_fail_soft_when_no_chip_is_detected(monkeypatch):
+    from openflight.inclinometer import AccelerometerNotFoundError
+
+    def not_found(**kwargs):
+        assert kwargs == {"bus_number": 1, "address": None}
+        raise AccelerometerNotFoundError("No LIS3DH or LSM6DS3 found on I2C-1")
+
+    logged = {}
+    monkeypatch.setattr("openflight.inclinometer.detect_accelerometer", not_found)
+    monkeypatch.setattr(server, "log_session_error", lambda *_args, **kwargs: logged.update(kwargs))
+
+    assert server.init_inclinometer(zero_offset_deg=0.0) is False
+    assert server.inclinometer_service is None
+    assert server.inclinometer_runtime_config["sensor"] == "auto"
+    assert server.inclinometer_runtime_config["i2c_address"] == "auto"
+    assert "No LIS3DH or LSM6DS3" in server.inclinometer_runtime_config["error"]
+    assert logged["context"] == {"i2c_bus": 1, "i2c_address": "auto"}
+
+
+def test_init_inclinometer_records_detected_lsm6ds3(monkeypatch):
+    class DetectedSensor:
+        NAME = "lsm6ds3"
+        address = 0x6B
+
+    class ReadyService:
+        sample_hz = 10.0
+
+        def __init__(self, sensor, **kwargs):
+            assert isinstance(sensor, DetectedSensor)
+            assert kwargs == {"zero_offset_deg": 0.5}
+
+        def start(self):
+            pass
+
+        def wait_for_stable(self, timeout_s):
+            return _stable_selection()
+
+    monkeypatch.setattr(
+        "openflight.inclinometer.detect_accelerometer", lambda **_kwargs: DetectedSensor()
+    )
+    monkeypatch.setattr("openflight.inclinometer.InclinometerService", ReadyService)
+    monkeypatch.setattr(server, "iwr6843_runtime", None)
+    # Registered so monkeypatch restores the globals init_inclinometer replaces.
+    monkeypatch.setattr(server, "inclinometer_service", None)
+    monkeypatch.setattr(server, "inclinometer_runtime_config", {"enabled": False})
+
+    assert server.init_inclinometer(zero_offset_deg=0.5) is True
+    assert server.inclinometer_runtime_config["sensor"] == "lsm6ds3"
+    assert server.inclinometer_runtime_config["i2c_address"] == "0x6b"
+    assert server.inclinometer_runtime_config["startup"]["status"] == "stable"
+
+
+def test_init_inclinometer_closes_detected_sensor_when_service_setup_fails(monkeypatch):
+    closed = []
+
+    class DetectedSensor:
+        NAME = "lsm6ds3"
+        address = 0x6A
+
+        def close(self):
+            closed.append(True)
+
+    def broken_service(_sensor, **_kwargs):
+        raise ValueError("bad config")
+
+    monkeypatch.setattr(
+        "openflight.inclinometer.detect_accelerometer", lambda **_kwargs: DetectedSensor()
+    )
+    monkeypatch.setattr("openflight.inclinometer.InclinometerService", broken_service)
+    monkeypatch.setattr(server, "log_session_error", lambda *_args, **_kwargs: None)
+
+    assert server.init_inclinometer(zero_offset_deg=0.0) is False
+    assert closed == [True]
+    assert server.inclinometer_runtime_config["sensor"] == "lsm6ds3"
+    assert server.inclinometer_runtime_config["i2c_address"] == "0x6a"
 
 
 def test_inclinometer_flag_requires_iwr6843(monkeypatch):

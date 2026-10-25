@@ -29,6 +29,28 @@ Raspberry Pi GPIO header without soldering pins onto the LIS3DH.
 Do not buy a bare LIS3DH chip. Use a breakout board with the regulator, I2C
 pull-ups, and STEMMA QT/Qwiic connectors already installed.
 
+### Alternative: LSM6DS3 Breakout
+
+If the Adafruit LIS3DH is unavailable, a generic LSM6DS3 or LSM6DS3TR-C breakout
+(the common purple six-pin GY-LSM6DS3 style boards) also works. OpenFlight
+auto-detects whichever chip is present, so no extra flag is needed. Only the
+accelerometer is used; the gyroscope stays off.
+
+| | LIS3DH | LSM6DS3 / LSM6DS3TR-C |
+|---|---|---|
+| I2C address | `0x18` (`0x19` with SDO high) | `0x6a` (`0x6b` with SDO/SA0 high) |
+| WHO_AM_I | `0x33` | `0x69` / `0x6a` |
+| Connector | STEMMA QT/Qwiic | Header pins (solder them on) |
+
+These boards have no Qwiic socket. Solder the header pins and use four
+female-to-female jumpers: `VCC` to pin **17** (3.3 V), `GND` to pin **20**,
+`SDA` to pin **3**, `SCL` to pin **5**. Leave `SDO`/`SA0` and `CS` unconnected
+unless the board's address scan shows nothing (on some boards `CS` must be
+tied to 3.3 V to select I2C mode). Use the board's own silkscreen axis arrows
+for the mounting step below; the X/Y orientation differs from the Adafruit
+board. The board's mounting holes do not match the LIS3DH footprint, so fix it
+with thin double-sided tape.
+
 ## How Compensation Works
 
 The LIS3DH is mounted flat on the enclosure base, not on the tilted TI radar
@@ -126,7 +148,8 @@ sudo apt-get install -y i2c-tools
 i2cdetect -y 1
 ```
 
-The default LIS3DH address is `0x18`, so the scan should contain `18`:
+The default LIS3DH address is `0x18`, so the scan should contain `18` (an
+LSM6DS3 shows `6a` or `6b` instead):
 
 ```text
      0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f
@@ -170,7 +193,7 @@ uv run python scripts/hardware-test/read_lis3dh.py \
   --zero-offset-deg 1.5 \
   --iwr6843-tilt-deg 11.5
 
-# Probe a non-default address while troubleshooting
+# Probe a single address while troubleshooting (default: auto-detect)
 uv run python scripts/hardware-test/read_lis3dh.py --address 0x19
 ```
 
