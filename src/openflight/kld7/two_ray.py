@@ -151,8 +151,8 @@ TIER2_BOOST_CONFIDENCE = 0.35
 # Published TrackMan PGA-tour average launch angles (deg) per club: woods launch
 # low, irons climb, wedges highest. Values for clubs TrackMan doesn't publish a
 # tour stat for (woods past 3w, hybrids, GW/SW/LW) are interpolated along that
-# trend. Every club's tier thresholds are derived from this table. UNKNOWN is
-# intentionally absent -> _tier_config_for returns None -> geometry fallback.
+# trend. Every club's tier thresholds are derived from this table. UNKNOWN and
+# PUTTER (no flight to fit) are intentionally absent -> geometry fallback.
 _TOUR_LAUNCH_DEG: "dict[ClubType, float]" = {
     ClubType.DRIVER: 10.4,
     ClubType.WOOD_3: 9.3,

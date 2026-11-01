@@ -1,7 +1,14 @@
 import type { Shot, SpinQuality, SwingSpeedStats } from '../../types/shot';
-import { getDisplayCarryYards, getSwingSpeedMph, isSwingSpeedShot } from '../../types/shot';
+import { getDisplayCarryYards, getSwingSpeedMph, isPuttShot, isSwingSpeedShot } from '../../types/shot';
 import type { UnitSystem } from '../../utils/units';
-import { formatDistance, formatSpeed, getDistanceUnit, getSpeedUnit } from '../../utils/units';
+import {
+  formatDistance,
+  formatRollDistance,
+  formatSpeed,
+  getDistanceUnit,
+  getRollDistanceUnit,
+  getSpeedUnit,
+} from '../../utils/units';
 import { getHtmlLang, t } from '../../i18n';
 
 /** Placeholder for a metric the current shot has no value for. */
@@ -70,9 +77,28 @@ function experimentalStatus(status: string | null | undefined): string {
   return status.replace(/^rejected_/, 'rejected: ').replaceAll('_', ' ');
 }
 
+/** Keeps the `carry` id for a putt so a pinned Carry tile stays pinned as Roll. */
+function distanceMetric(shot: Shot, unitSystem: UnitSystem): LiveMetric {
+  if (isPuttShot(shot)) {
+    return {
+      id: 'carry',
+      label: t('metric.roll'),
+      value: formatRollDistance(shot.roll_distance_ft, unitSystem),
+      unit: getRollDistanceUnit(unitSystem),
+    };
+  }
+  return {
+    id: 'carry',
+    label: t('metric.carry'),
+    value: formatDistance(getDisplayCarryYards(shot), unitSystem, 0),
+    unit: getDistanceUnit(unitSystem),
+    subtext: shot.carry_spin_adjusted === null ? undefined : t('metric.spinAdjusted'),
+    estimated: markEstimated(shot.carry_spin_adjusted === null),
+  };
+}
+
 function buildBallStrikeMetrics(shot: Shot, unitSystem: UnitSystem): LiveMetric[] {
   const speedUnit = getSpeedUnit(unitSystem);
-  const carry = getDisplayCarryYards(shot);
   const angleConfidence = launchAngleQuality(shot.launch_angle_confidence);
   const angleEstimated = shot.angle_source === 'estimated';
   const horizontalLaunchIsCameraAssisted = shot.launch_angle_horizontal_source === 'camera_assisted_experimental';
@@ -107,14 +133,7 @@ function buildBallStrikeMetrics(shot: Shot, unitSystem: UnitSystem): LiveMetric[
       value: formatSpeed(shot.ball_speed_mph, unitSystem, 1),
       unit: speedUnit,
     },
-    {
-      id: 'carry',
-      label: t('metric.carry'),
-      value: formatDistance(carry, unitSystem, 0),
-      unit: getDistanceUnit(unitSystem),
-      subtext: shot.carry_spin_adjusted === null ? undefined : t('metric.spinAdjusted'),
-      estimated: markEstimated(shot.carry_spin_adjusted === null),
-    },
+    distanceMetric(shot, unitSystem),
     {
       id: 'club_speed',
       label: t('metric.clubSpeed'),

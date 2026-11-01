@@ -1,14 +1,20 @@
 import { useMemo, useRef, useState } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import type { Shot } from '../../types/shot';
-import { filterShotsByProfile, getSwingSpeedMph, isSwingSpeedShot } from '../../types/shot';
+import {
+  filterShotsByProfile,
+  getDisplayCarryYards,
+  getSwingSpeedMph,
+  isPuttShot,
+  isSwingSpeedShot,
+} from '../../types/shot';
 import { useDragScroll } from '../../hooks/useDragScroll';
 import { useUnitPreference } from '../../state/useUnitPreference';
 import { useSystemStore } from '../../stores/useSystemStore';
 import { getEmptyValidationEntry, useValidationStore, type ValidationEntry } from '../../stores/useValidationStore';
 import { socketService } from '../../services/socketService';
 import type { UnitSystem } from '../../utils/units';
-import { formatDistance, formatSpeed } from '../../utils/units';
+import { formatDistance, formatRollDistance, formatSpeed, getRollDistanceUnit } from '../../utils/units';
 import { buildValidationCsv, comparatorDifference, downloadCsv } from '../../utils/validationCsv';
 import { PanelHeader } from './PanelHeader';
 import { PanelAction } from './PanelAction';
@@ -51,7 +57,9 @@ function rowValues(shot: Shot, unitSystem: UnitSystem): string[] {
     shot.club_speed_mph === null ? '—' : formatSpeed(shot.club_speed_mph, unitSystem, 1),
     optionalNumber(shot.launch_angle_vertical),
     shot.spin_rpm === null ? '—' : shot.spin_rpm.toLocaleString(getHtmlLang(), { maximumFractionDigits: 0 }),
-    formatDistance(shot.estimated_carry_yards, unitSystem, 0),
+    isPuttShot(shot)
+      ? `${formatRollDistance(shot.roll_distance_ft, unitSystem)} ${getRollDistanceUnit(unitSystem)}`
+      : formatDistance(getDisplayCarryYards(shot), unitSystem, 0),
   ];
 }
 

@@ -14,6 +14,7 @@ from openflight.ballistics import (
     DISPLAY_TRAJECTORY_MAX_POINTS,
     FT_PER_YD,
     MPH_TO_MPS,
+    PUTT_ROLL_DECELERATION_MPS2,
     SP_FIT_MAX,
     SPIN_DECAY_RATE,
     LaunchConditions,
@@ -23,6 +24,8 @@ from openflight.ballistics import (
     _cl,
     _poly,
     display_trajectory,
+    is_putt,
+    putt_roll_distance_ft,
     resolve_launch,
     simulate,
 )
@@ -83,6 +86,36 @@ class TestResolveLaunch:
         shot = _shot(spin_axis_deg=None)
         cond = resolve_launch(shot)
         assert cond.spin_axis_deg == 0.0
+
+
+class TestPutts:
+    """Putts follow Open-Birdie: a putter shot under 2 deg and 40 mph rolls."""
+
+    def test_open_birdie_reference_putt_rolls_about_eleven_feet(self):
+        assert putt_roll_distance_ft(4.5) == pytest.approx(11.06, abs=0.01)
+
+    def test_roll_is_speed_squared_over_twice_the_green_deceleration(self):
+        speed_mps = 6.0 * MPH_TO_MPS
+        expected_m = speed_mps**2 / (2 * PUTT_ROLL_DECELERATION_MPS2)
+        assert PUTT_ROLL_DECELERATION_MPS2 == 0.6
+        assert putt_roll_distance_ft(6.0) == pytest.approx(expected_m * 3.28084, rel=1e-4)
+        assert putt_roll_distance_ft(12.0) == pytest.approx(4 * putt_roll_distance_ft(6.0))
+        assert putt_roll_distance_ft(0.0) == 0.0
+
+    def test_slow_flat_putter_shot_is_a_putt(self):
+        assert is_putt(_shot(club=ClubType.PUTTER, ball_speed_mph=6.0, launch_angle_vertical=1.9))
+
+    @pytest.mark.parametrize(
+        ("club", "speed", "launch"),
+        [
+            (ClubType.SW, 6.0, 1.0),
+            (ClubType.PUTTER, 6.0, 2.0),
+            (ClubType.PUTTER, 40.0, 1.0),
+            (ClubType.PUTTER, 6.0, None),
+        ],
+    )
+    def test_shots_open_birdie_would_fly_are_not_putts(self, club, speed, launch):
+        assert not is_putt(_shot(club=club, ball_speed_mph=speed, launch_angle_vertical=launch))
 
 
 def _driver(spin_rpm=2700, launch=11.0, ball_speed=165.0, axis=0.0, la_h=0.0):

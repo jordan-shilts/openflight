@@ -86,6 +86,29 @@ CLUB_TYPICAL_SPIN_RPM: dict[ClubType, float] = {
     club: physics.typical_spin_rpm for club, physics in CLUB_PHYSICS.items()
 }
 
+# Open-Birdie's putt model: a shot from the green with VLA under 2 deg and ball
+# speed under 40 mph rolls at a constant 0.6 m/s^2 on a flat green.
+PUTT_MAX_LAUNCH_DEG = 2.0
+PUTT_MAX_BALL_SPEED_MPH = 40.0
+PUTT_ROLL_DECELERATION_MPS2 = 0.6
+
+
+def is_putt(shot: Shot) -> bool:
+    """A putter shot that Open-Birdie rolls along the green instead of flying."""
+    return (
+        shot.club is ClubType.PUTTER
+        and shot.launch_angle_vertical is not None
+        and shot.launch_angle_vertical < PUTT_MAX_LAUNCH_DEG
+        and shot.ball_speed_mph < PUTT_MAX_BALL_SPEED_MPH
+    )
+
+
+def putt_roll_distance_ft(ball_speed_mph: float) -> float:
+    """Feet a putt rolls on a flat green before stopping: v^2 / (2 * deceleration)."""
+    speed_mps = ball_speed_mph * MPH_TO_MPS
+    roll_m = speed_mps**2 / (2 * PUTT_ROLL_DECELERATION_MPS2)
+    return roll_m * M_TO_YD * FT_PER_YD
+
 
 @dataclass
 class LaunchConditions:

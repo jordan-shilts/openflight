@@ -1338,6 +1338,7 @@ class TestShotToDict:
         assert result["club_speed_mph"] == 103.2
         assert result["club"] == "driver"
         assert result["profile_name"] == ""
+        assert result["roll_distance_ft"] is None
         assert result["timestamp"] == "2024-01-15T10:30:00"
         assert "estimated_carry_yards" in result
         assert "carry_range" in result
@@ -2257,6 +2258,12 @@ class TestEstimateLaunchAngle:
         _, conf = estimate_launch_angle(ClubType.DRIVER, 143, spin_rpm=2500)
         assert conf == 0.35
 
+    def test_putter_estimate_stays_under_the_putt_launch_limit(self):
+        """No 5 degree full-swing floor: Open-Birdie only rolls a putt under 2 degrees."""
+        angle, conf = estimate_launch_angle(ClubType.PUTTER, 6.0, club_speed_mph=4.1, spin_rpm=80)
+        assert 0 < angle < 2.0
+        assert conf == 0.2
+
 
 class TestMockLaunchMonitor:
     """Tests for MockLaunchMonitor."""
@@ -2307,6 +2314,36 @@ class TestMockLaunchMonitor:
         monitor.simulate_shot()
 
         assert len(received_shots) == 1
+
+    def test_putter_shots_are_realistic_putts(self):
+        """Putts skip the full-swing clamps and stay inside Open-Birdie's putt limits."""
+        monitor = MockLaunchMonitor(processing_step_s=0)
+        monitor.set_club(ClubType.PUTTER)
+
+        shots = [monitor.simulate_shot() for _ in range(300)]
+
+        speeds = [shot.ball_speed_mph for shot in shots]
+        assert min(speeds) >= 1.5
+        assert max(speeds) < 20.0
+        assert 5.0 <= sum(speeds) / len(speeds) <= 7.0
+        assert any(speed < 4.0 for speed in speeds) and any(speed > 8.0 for speed in speeds)
+        for shot in shots:
+            assert shot.club is ClubType.PUTTER
+            assert 0.5 <= shot.launch_angle_vertical < 2.0
+            assert 0.0 <= shot.spin_rpm < 300.0
+            assert 1.419 < shot.smash_factor < 1.481
+            assert shot.club_speed_mph < shot.ball_speed_mph
+            assert -3.0 < shot.club_angle_deg < 7.0
+
+    def test_full_swing_clamps_still_apply_to_other_clubs(self):
+        monitor = MockLaunchMonitor(processing_step_s=0)
+        monitor.set_club(ClubType.LW)
+
+        for _ in range(100):
+            shot = monitor.simulate_shot()
+            assert shot.ball_speed_mph >= 50
+            assert shot.spin_rpm >= 1000
+            assert shot.launch_angle_vertical >= 5.0
 
     def test_set_club(self):
         """Set club should affect future shots."""
@@ -5221,6 +5258,86 @@ class TestFlightTrajectoryPayload:
         assert trajectory["points"][-1][0] == pytest.approx(shot.carry_spin_adjusted, abs=0.05)
         assert trajectory["apex_ft"] > 0
         assert 2 <= len(trajectory["points"]) <= 61
+
+    @pytest.mark.parametrize("ballistics", [True, False])
+    def test_mock_putt_publishes_a_roll_instead_of_a_flight(self, monkeypatch, ballistics):
+        monkeypatch.setattr(server_module, "ballistics_enabled", ballistics)
+        mock = self._mock_monitor(ClubType.PUTTER)
+        monkeypatch.setattr(server_module, "monitor", mock)
+
+        shot = mock.simulate_shot()
+        _wait_for_shot_finalization_idle()
+
+        payload = self._emitted_shot()
+        expected = server_module.putt_roll_distance_ft(shot.ball_speed_mph)
+        assert shot.roll_distance_ft == pytest.approx(expected)
+        assert payload["roll_distance_ft"] == round(expected, 1)
+        assert payload["carry_spin_adjusted"] == 0
+        assert payload["trajectory"] is None
+
+    def test_putter_shot_without_a_launch_angle_still_rolls(self, monkeypatch):
+        monkeypatch.setattr(server_module, "ballistics_enabled", True)
+        shot = self._driver_shot(
+            club=ClubType.PUTTER,
+            ball_speed_mph=4.5,
+            club_speed_mph=3.1,
+            spin_rpm=None,
+            spin_confidence=None,
+            launch_angle_vertical=None,
+            launch_angle_confidence=None,
+        )
+
+        server_module._finalize_shot_detected(shot, emit_event="shot")
+
+        payload = self._emitted_shot()
+        assert payload["launch_angle_vertical"] < 2.0
+        assert payload["roll_distance_ft"] == pytest.approx(11.1, abs=0.05)
+        assert payload["trajectory"] is None
+
+    def test_putter_shot_that_launches_flies_like_any_other(self, monkeypatch):
+        """Open-Birdie flies a 2 degree or faster-than-40 shot, so OpenFlight does too."""
+        monkeypatch.setattr(server_module, "ballistics_enabled", True)
+        shot = self._driver_shot(club=ClubType.PUTTER, ball_speed_mph=45.0, launch_angle_vertical=6.0)
+
+        server_module._finalize_shot_detected(shot, emit_event="shot")
+
+        payload = self._emitted_shot()
+        assert payload["roll_distance_ft"] is None
+        assert payload["carry_spin_adjusted"] > 0
+        assert payload["trajectory"] is not None
+
+    def test_mock_putt_reaches_the_simulator_unclamped_and_flat(self, monkeypatch):
+        from openflight.gspro.codec import GSProCodec
+
+        class _Connector:
+            name = "gspro"
+            codec = GSProCodec()
+
+            def __init__(self):
+                self.sent = []
+
+            def is_connected(self):
+                return True
+
+            def send_shot(self, resolved):
+                self.sent.append(resolved)
+
+        connector = _Connector()
+        monkeypatch.setattr(server_module, "sim_connectors", [connector])
+        monkeypatch.setattr(server_module, "sim_player_state", server_module.SimPlayerState())
+        monkeypatch.setattr(server_module, "ballistics_enabled", True)
+        mock = self._mock_monitor(ClubType.PUTTER)
+        monkeypatch.setattr(server_module, "monitor", mock)
+
+        shot = mock.simulate_shot(ball_speed=6.0)
+        _wait_for_shot_finalization_idle()
+
+        (resolved,) = connector.sent
+        wire = json.loads(connector.codec.build_shot(resolved))["BallData"]
+        assert wire["Speed"] == 6.0
+        assert wire["VLA"] == shot.launch_angle_vertical < 2.0
+        assert wire["CarryDistance"] == 0.0
+        assert wire["TotalSpin"] < 300
 
     def test_mock_shot_keeps_its_estimate_when_ballistics_is_off(self, monkeypatch):
         monkeypatch.setattr(server_module, "ballistics_enabled", False)

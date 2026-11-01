@@ -451,11 +451,11 @@ class TestTwoRayTierClassifier:
         assert pw == _derive_tier_config(_TOUR_LAUNCH_DEG[ClubType.PW])
 
     def test_every_real_club_characterized(self):
-        # Every club except UNKNOWN has a tier config (full enable); UNKNOWN
-        # and None fall through to geometry.
+        # Every full-swing club has a tier config (full enable); UNKNOWN,
+        # PUTTER (a putt has no flight to fit) and None fall through to geometry.
         for club in ClubType:
             cfg = _tier_config_for(club)
-            if club is ClubType.UNKNOWN:
+            if club in (ClubType.UNKNOWN, ClubType.PUTTER):
                 assert cfg is None
             else:
                 assert cfg is not None, club

@@ -52,6 +52,7 @@ export const pt: Messages = {
 
   'metric.ballSpeed': 'Vel. bola',
   'metric.carry': 'Carry',
+  'metric.roll': 'Rolagem',
   'metric.clubSpeed': 'Vel. taco',
   'metric.smash': 'Smash',
   'metric.vLaunch': 'Saída V.',
@@ -80,6 +81,8 @@ export const pt: Messages = {
   'flight.hangTime': 'Tempo de voo',
   'flight.unavailable': 'Sem voo para esta tacada',
   'flight.unavailableDetail': 'O voo precisa do ângulo de saída e do modelo balístico',
+  'flight.putt': 'Um putt não tem voo',
+  'flight.puttDetail': 'Rolou {distance} {unit} pelo green',
   'flight.chartLabel': 'Vista lateral do voo: carry {carry} {distanceUnit}, altura máx. {apex} {heightUnit}',
 
   'stats.filterByClub': 'Filtrar por taco',
@@ -90,6 +93,7 @@ export const pt: Messages = {
   'stats.avgBall': 'Média bola',
   'stats.maxBall': 'Máx. bola',
   'stats.avgCarry': 'Média carry',
+  'stats.avgRoll': 'Média rolagem',
   'stats.avgClub': 'Média taco',
   'stats.avgSmash': 'Média smash',
   'stats.last': 'Último',
@@ -176,6 +180,7 @@ export const pt: Messages = {
   'clubGroup.Irons': 'Ferros',
   'clubGroup.Hybrids': 'Híbridos',
   'clubGroup.Woods': 'Madeiras',
+  'clubGroup.Putter': 'Putter',
   'clubGroup.General': 'Geral',
 
   'shutdown.pendingAria': 'Desligando o OpenFlight',

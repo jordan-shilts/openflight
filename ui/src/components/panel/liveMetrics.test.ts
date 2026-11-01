@@ -125,6 +125,20 @@ describe('buildLiveMetrics', () => {
     expect(estimated.estimated).toBe(true);
   });
 
+  it('turns the carry tile into a roll in feet for a putt, keeping its id and slot', () => {
+    const putt = makeShot({ club: 'putter', carry_spin_adjusted: 0, roll_distance_ft: 19.7, ball_speed_mph: 6 });
+    const metrics = buildLiveMetrics(putt, 'imperial', emptySwingStats);
+    const roll = byId(metrics, 'carry');
+
+    expect(metrics).toHaveLength(LIVE_METRIC_COUNT);
+    expect(metrics[1]).toBe(roll);
+    expect(roll).toEqual({ id: 'carry', label: 'Roll', value: '20', unit: 'ft' });
+    expect(byId(buildLiveMetrics(putt, 'metric', emptySwingStats), 'carry')).toMatchObject({
+      value: '6.0',
+      unit: 'm',
+    });
+  });
+
   it('signs the directional angles and labels the shot shape', () => {
     const metrics = buildLiveMetrics(makeShot(), 'imperial', emptySwingStats);
 

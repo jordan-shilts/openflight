@@ -26,4 +26,5 @@ class ClubType(Enum):
     GW = "gw"
     SW = "sw"
     LW = "lw"
+    PUTTER = "putter"
     UNKNOWN = "unknown"

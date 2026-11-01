@@ -48,6 +48,17 @@ describe('DisplayMode', () => {
     expect(html).not.toContain('display-metric');
   });
 
+  it('shows a putt as a roll in feet, in the metric and the recent strip', () => {
+    const putt: Shot = { ...shot, club: 'putter', ball_speed_mph: 6, carry_spin_adjusted: 0, roll_distance_ft: 19.7 };
+    const html = renderToString(
+      <DisplayMode connected captureSettings={captureSettings} latestShot={putt} shots={[putt]} />
+    ).replace(/<!-- -->/g, '');
+
+    expect(html).toContain('>Roll<');
+    expect(html).toContain('20 ft');
+    expect(html).not.toContain('0 yds');
+  });
+
   it('does not request a preview when camera capture is unavailable', () => {
     const html = renderToString(
       <DisplayMode connected captureSettings={{ available: false }} latestShot={shot} shots={[shot]} />

@@ -209,7 +209,8 @@ class Shot:
         spin_phase_agreement_pct: Envelope/phase agreement percentage
         spin_phase_confirmed: Whether phase recovered a low-SNR spin
         spin_rejection_reason: Why spin was withheld, if it was rejected
-        carry_spin_adjusted: Carry distance adjusted for spin (yards)
+        carry_spin_adjusted: Carry distance adjusted for spin (yards); 0 for a putt
+        roll_distance_ft: Putt roll on a flat green (feet), set instead of a flight
         mode: Shot source — "streaming", "rolling-buffer", or "mock"
         readings_data: Serialized readings for session logging
         camera_replay: Public replay metadata for a matched high-speed capture
@@ -257,6 +258,7 @@ class Shot:
     spin_phase_confirmed: bool = False
     spin_rejection_reason: Optional[str] = None
     carry_spin_adjusted: Optional[float] = None
+    roll_distance_ft: Optional[float] = None
     mode: str = "rolling-buffer"
     profile_id: str = ""
     profile_name: str = ""
@@ -469,6 +471,7 @@ class Shot:
             "spin_phase_confirmed": self.spin_phase_confirmed,
             "spin_rejection_reason": self.spin_rejection_reason,
             "carry_spin_adjusted": self.carry_spin_adjusted,
+            "roll_distance_ft": self.roll_distance_ft,
         }
 
 

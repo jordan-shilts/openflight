@@ -9,6 +9,8 @@ const IMPERIAL_DISTANCE_UNIT = 'yds';
 const METRIC_DISTANCE_UNIT = 'm';
 const IMPERIAL_HEIGHT_UNIT = 'ft';
 const METRIC_HEIGHT_UNIT = 'm';
+const IMPERIAL_ROLL_UNIT = 'ft';
+const METRIC_ROLL_UNIT = 'm';
 
 export function convertSpeedFromMph(speedMph: number, unitSystem: UnitSystem): number {
   if (unitSystem === 'metric') {
@@ -40,6 +42,15 @@ export function formatSpeed(speedMph: number, unitSystem: UnitSystem, digits = 1
 
 export function formatDistance(distanceYards: number, unitSystem: UnitSystem, digits = 0): string {
   return convertDistanceFromYards(distanceYards, unitSystem).toFixed(digits);
+}
+
+/** Putt roll: whole feet, or meters to a tenth since a meter is over three feet. */
+export function formatRollDistance(distanceFeet: number, unitSystem: UnitSystem): string {
+  return unitSystem === 'metric' ? (distanceFeet * FEET_TO_METERS).toFixed(1) : distanceFeet.toFixed(0);
+}
+
+export function getRollDistanceUnit(unitSystem: UnitSystem): string {
+  return unitSystem === 'metric' ? METRIC_ROLL_UNIT : IMPERIAL_ROLL_UNIT;
 }
 
 export function getSpeedUnit(unitSystem: UnitSystem): string {

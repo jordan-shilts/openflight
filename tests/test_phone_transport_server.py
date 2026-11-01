@@ -62,7 +62,7 @@ def test_network_club_post_without_monitor_applies_and_broadcasts(no_monitor_tra
     assert ble.clubs == ["pw"]
 
 
-@pytest.mark.parametrize("payload", [{"club": "putter"}, {"club": "unknown"}, {}, None, "pw"])
+@pytest.mark.parametrize("payload", [{"club": "chipper"}, {"club": "unknown"}, {}, None, "pw"])
 def test_network_club_post_rejects_invalid_selection(no_monitor_transports, payload):
     stream, ble, emitted = no_monitor_transports
 
@@ -76,7 +76,7 @@ def test_network_club_post_rejects_invalid_selection(no_monitor_transports, payl
     assert ble.clubs == []
 
 
-@pytest.mark.parametrize("payload", [{"club": "putter"}, {"club": "unknown"}, None])
+@pytest.mark.parametrize("payload", [{"club": "chipper"}, {"club": "unknown"}, None])
 def test_socket_set_club_ignores_invalid_selection(no_monitor_transports, payload):
     stream, ble, emitted = no_monitor_transports
 

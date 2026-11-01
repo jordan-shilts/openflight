@@ -27,15 +27,12 @@ _GSPRO_CLUB_MAP = {
     "GW": ClubType.GW,
     "SW": ClubType.SW,
     "LW": ClubType.LW,
-    # "PT" intentionally absent — putting is out of scope for v1
+    "PT": ClubType.PUTTER,
 }
 
 
 def gspro_code_to_club(code: str) -> ClubType:
     """Map a GSPro club code (e.g. 'DR', 'I7') to ClubType. Unknown -> UNKNOWN."""
-    if code == "PT":
-        logger.info("[gspro] putter received — putting is out of scope, mapping to UNKNOWN")
-        return ClubType.UNKNOWN
     club = _GSPRO_CLUB_MAP.get(code)
     if club is None:
         logger.warning("[gspro] unknown club code %r, mapping to UNKNOWN", code)

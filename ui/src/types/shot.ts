@@ -71,6 +71,8 @@ export interface Shot {
   spin_method?: string | null;
   spin_multipath_fade_hz?: number | null;
   carry_spin_adjusted: number | null;
+  /** Putt roll on a flat green, in feet. A putt has no flight, and carry is 0. */
+  roll_distance_ft?: number | null;
   trajectory?: ShotTrajectory | null;
   swing_speed_duration_ms?: number;
   swing_speed_reading_count?: number;
@@ -89,6 +91,8 @@ export interface SessionStats {
   avg_club_speed: number | null;
   avg_smash_factor: number | null;
   avg_carry_est: number;
+  /** Computed in the UI only; null when no putts are included. */
+  avg_roll_ft?: number | null;
   // Rolling buffer mode spin stats
   avg_spin_rpm?: number | null;
   spin_detection_rate?: number;
@@ -167,6 +171,15 @@ export function isSwingSpeedShot(shot: Shot | null): boolean {
 
 export function getDisplayCarryYards(shot: Shot): number {
   return shot.carry_spin_adjusted ?? shot.estimated_carry_yards;
+}
+
+export function isPuttShot(shot: Shot): shot is Shot & { roll_distance_ft: number } {
+  return shot.roll_distance_ft != null;
+}
+
+/** Carries behind carry stats. A putt rolls, so its 0 carry is left out. */
+export function statsCarryYards(shots: Shot[]): number[] {
+  return shots.filter((shot) => !isPuttShot(shot)).map(getDisplayCarryYards);
 }
 
 export function getSwingSpeedMph(shot: Shot): number {
@@ -262,13 +275,15 @@ export function computeStats(shots: Shot[]): SessionStats {
       avg_club_speed: null,
       avg_smash_factor: null,
       avg_carry_est: 0,
+      avg_roll_ft: null,
     };
   }
 
   const ballSpeeds = shots.map((s) => s.ball_speed_mph);
   const clubSpeeds = shots.map((s) => s.club_speed_mph).filter((v): v is number => v !== null);
   const smashFactors = shots.map((s) => s.smash_factor).filter((v): v is number => v !== null);
-  const carries = shots.map((s) => s.estimated_carry_yards);
+  const carries = statsCarryYards(shots);
+  const rolls = shots.filter(isPuttShot).map((s) => s.roll_distance_ft);
 
   const mean = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
   const stdDev = (arr: number[]) => {
@@ -285,7 +300,8 @@ export function computeStats(shots: Shot[]): SessionStats {
     std_dev: stdDev(ballSpeeds),
     avg_club_speed: clubSpeeds.length > 0 ? mean(clubSpeeds) : null,
     avg_smash_factor: smashFactors.length > 0 ? mean(smashFactors) : null,
-    avg_carry_est: mean(carries),
+    avg_carry_est: carries.length > 0 ? mean(carries) : 0,
+    avg_roll_ft: rolls.length > 0 ? mean(rolls) : null,
   };
 }
 

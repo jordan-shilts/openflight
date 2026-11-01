@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { CLUBS_BY_TYPE } from '../data/clubs';
 import { catalogs, LOCALES, setActiveLocale, t } from './index';
 import { en } from './en';
 
@@ -17,6 +18,14 @@ describe('i18n catalogs', () => {
 
     for (const [id, messages] of Object.entries(catalogs)) {
       expect(Object.keys(messages).sort(), id).toEqual(englishKeys);
+    }
+  });
+
+  it('names every club group in every locale', () => {
+    for (const [id, messages] of Object.entries(catalogs)) {
+      for (const group of Object.keys(CLUBS_BY_TYPE)) {
+        expect(messages[`clubGroup.${group}` as keyof typeof en], `${id} ${group}`).toBeTruthy();
+      }
     }
   });
 

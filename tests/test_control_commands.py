@@ -60,11 +60,23 @@ def test_apply_club_selection_updates_monitor_and_broadcasts(monkeypatch):
     assert ble.clubs == ["7-iron"]
 
 
-def test_apply_club_selection_rejects_unknown_club(monkeypatch):
+def test_apply_club_selection_accepts_the_putter(monkeypatch):
     monitor = _Monitor()
     monkeypatch.setattr(server_module, "monitor", monitor)
 
     response, status = server_module.apply_club_selection({"club": "putter"})
+
+    assert status == 200
+    assert response == {"status": "applied", "club": "putter"}
+    assert monitor.clubs == [ClubType.PUTTER]
+    assert server_module.active_club is ClubType.PUTTER
+
+
+def test_apply_club_selection_rejects_unknown_club(monkeypatch):
+    monitor = _Monitor()
+    monkeypatch.setattr(server_module, "monitor", monitor)
+
+    response, status = server_module.apply_club_selection({"club": "chipper"})
 
     assert status == 400
     assert "Unknown club" in response["error"]

@@ -50,6 +50,7 @@ export const en = {
 
   'metric.ballSpeed': 'Ball speed',
   'metric.carry': 'Carry',
+  'metric.roll': 'Roll',
   'metric.clubSpeed': 'Club speed',
   'metric.smash': 'Smash',
   'metric.vLaunch': 'V. launch',
@@ -78,6 +79,8 @@ export const en = {
   'flight.hangTime': 'Hang time',
   'flight.unavailable': 'No flight for this shot',
   'flight.unavailableDetail': 'The flight needs a launch angle and the ballistics model',
+  'flight.putt': 'No flight for a putt',
+  'flight.puttDetail': 'It rolled {distance} {unit} along the green',
   'flight.chartLabel': 'Side view of the flight: carry {carry} {distanceUnit}, apex {apex} {heightUnit}',
 
   'stats.filterByClub': 'Filter by club',
@@ -88,6 +91,7 @@ export const en = {
   'stats.avgBall': 'Avg ball',
   'stats.maxBall': 'Max ball',
   'stats.avgCarry': 'Avg carry',
+  'stats.avgRoll': 'Avg roll',
   'stats.avgClub': 'Avg club',
   'stats.avgSmash': 'Avg smash',
   'stats.last': 'Last',
@@ -174,6 +178,7 @@ export const en = {
   'clubGroup.Irons': 'Irons',
   'clubGroup.Hybrids': 'Hybrids',
   'clubGroup.Woods': 'Woods',
+  'clubGroup.Putter': 'Putter',
   'clubGroup.General': 'General',
 
   'shutdown.pendingAria': 'Shutting down OpenFlight',

@@ -6,12 +6,20 @@ import {
   computeSwingSpeedStats,
   filterShotsByProfile,
   getUniqueClubs,
+  isPuttShot,
   isSwingSpeedShot,
 } from '../../types/shot';
 import { useDragScroll } from '../../hooks/useDragScroll';
 import { useUnitPreference } from '../../state/useUnitPreference';
 import { useI18n, type MessageKey } from '../../i18n/useI18n';
-import { formatDistance, formatSpeed, getDistanceUnit, getSpeedUnit } from '../../utils/units';
+import {
+  formatDistance,
+  formatRollDistance,
+  formatSpeed,
+  getDistanceUnit,
+  getRollDistanceUnit,
+  getSpeedUnit,
+} from '../../utils/units';
 import { MetricCard } from '../ui/MetricCard';
 import { buildLeaderboard, LEADERBOARD_COLUMNS, leaderboardShots, type LeaderboardColumn } from './leaderboard';
 import { PanelAction } from './PanelAction';
@@ -114,6 +122,7 @@ export function StatsPanel({
   const stats = useMemo(() => computeStats(filteredShots), [filteredShots]);
   const swingStats = useMemo(() => computeSwingSpeedStats(filteredShots), [filteredShots]);
   const isSwingSpeedSession = filteredShots.length > 0 && filteredShots.every(isSwingSpeedShot);
+  const isPuttingOnly = filteredShots.length > 0 && filteredShots.every(isPuttShot);
 
   const tiles: StatTile[] = useMemo(() => {
     if (isSwingSpeedSession) {
@@ -154,12 +163,19 @@ export function StatsPanel({
         value: formatSpeed(stats.max_ball_speed, unitSystem, 1),
         unit: speedUnit,
       },
-      {
-        id: 'avg_carry',
-        label: t('stats.avgCarry'),
-        value: formatDistance(stats.avg_carry_est, unitSystem, 0),
-        unit: distanceUnit,
-      },
+      isPuttingOnly
+        ? {
+            id: 'avg_roll',
+            label: t('stats.avgRoll'),
+            value: formatRollDistance(stats.avg_roll_ft ?? 0, unitSystem),
+            unit: getRollDistanceUnit(unitSystem),
+          }
+        : {
+            id: 'avg_carry',
+            label: t('stats.avgCarry'),
+            value: formatDistance(stats.avg_carry_est, unitSystem, 0),
+            unit: distanceUnit,
+          },
       {
         id: 'avg_club',
         label: t('stats.avgClub'),
@@ -172,7 +188,7 @@ export function StatsPanel({
         value: stats.avg_smash_factor === null ? '—' : stats.avg_smash_factor.toFixed(2),
       },
     ];
-  }, [isSwingSpeedSession, stats, swingStats, unitSystem, speedUnit, distanceUnit, t]);
+  }, [isSwingSpeedSession, isPuttingOnly, stats, swingStats, unitSystem, speedUnit, distanceUnit, t]);
 
   const clubFilters = (
     <div className="stats-panel__chips" role="group" aria-label={t('stats.filterByClub')}>

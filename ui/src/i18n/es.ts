@@ -52,6 +52,7 @@ export const es: Messages = {
 
   'metric.ballSpeed': 'Vel. bola',
   'metric.carry': 'Carry',
+  'metric.roll': 'Rodado',
   'metric.clubSpeed': 'Vel. palo',
   'metric.smash': 'Smash',
   'metric.vLaunch': 'Salida V.',
@@ -80,6 +81,8 @@ export const es: Messages = {
   'flight.hangTime': 'Tiempo vuelo',
   'flight.unavailable': 'Sin vuelo para este golpe',
   'flight.unavailableDetail': 'El vuelo necesita un ángulo de salida y el modelo balístico',
+  'flight.putt': 'Un putt no tiene vuelo',
+  'flight.puttDetail': 'Rodó {distance} {unit} por el green',
   'flight.chartLabel': 'Vista lateral del vuelo: carry {carry} {distanceUnit}, altura máx. {apex} {heightUnit}',
 
   'stats.filterByClub': 'Filtrar por palo',
@@ -90,6 +93,7 @@ export const es: Messages = {
   'stats.avgBall': 'Media bola',
   'stats.maxBall': 'Máx. bola',
   'stats.avgCarry': 'Media carry',
+  'stats.avgRoll': 'Media rodado',
   'stats.avgClub': 'Media palo',
   'stats.avgSmash': 'Media smash',
   'stats.last': 'Último',
@@ -176,6 +180,7 @@ export const es: Messages = {
   'clubGroup.Irons': 'Hierros',
   'clubGroup.Hybrids': 'Híbridos',
   'clubGroup.Woods': 'Maderas',
+  'clubGroup.Putter': 'Putter',
   'clubGroup.General': 'General',
 
   'shutdown.pendingAria': 'Apagando OpenFlight',

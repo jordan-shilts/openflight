@@ -24,6 +24,8 @@ class ClubPhysics:
     each club; irons and wedges need more spin. UNKNOWN keeps the baseline (1.0).
     carry_smash_reference preserves the legacy carry model's separate smash target;
     its differences from optimal_smash are retained pending calibration review.
+    The putter launches below 2 degrees, where Open-Birdie rolls a green shot as a
+    putt, and keeps its smash under MAX_SMASH_FACTOR so the smash tile shows it.
     """
 
     nominal_loft_deg: float
@@ -76,6 +78,22 @@ class ShotSimulationDefaults:
     spin_axis_error_max_abs_deg: float = 5.0
 
 
+@dataclass(frozen=True)
+class PuttSimulationDefaults:
+    """Development putt bounds, used instead of the full-swing clamps.
+
+    Launch stays under 2 degrees so Open-Birdie rolls the shot as a putt, and a
+    putter meets the ball slightly on the way up rather than descending.
+    """
+
+    min_ball_speed_mph: float = 1.5
+    min_launch_deg: float = 0.5
+    max_launch_deg: float = 1.9
+    min_spin_rpm: float = 0.0
+    angle_of_attack_mean_deg: float = 2.0
+    angle_of_attack_std_dev_deg: float = 1.0
+
+
 CLUB_PHYSICS: Mapping[ClubType, ClubPhysics] = MappingProxyType(
     {
         ClubType.DRIVER: ClubPhysics(10.5, 11.0, 143, 0.15, 2700, 1.48, 1.0, 1.48),
@@ -98,6 +116,7 @@ CLUB_PHYSICS: Mapping[ClubType, ClubPhysics] = MappingProxyType(
         ClubType.GW: ClubPhysics(50.0, 30.0, 76, 0.30, 9500, 1.23, 4.1, 1.19),
         ClubType.SW: ClubPhysics(54.0, 32.0, 73, 0.30, 10000, 1.22, 4.3, 1.18),
         ClubType.LW: ClubPhysics(58.0, 35.0, 70, 0.30, 10500, 1.20, 4.6, 1.17),
+        ClubType.PUTTER: ClubPhysics(3.0, 1.5, 6.0, 0.10, 80, 1.45, 0.025, 1.45),
         ClubType.UNKNOWN: ClubPhysics(34.0, 18.0, 120, 0.25, 5000, 1.35, 1.0, 1.35),
     }
 )
@@ -124,12 +143,14 @@ CLUB_SIMULATION_PROFILES: Mapping[ClubType, ClubSimulationProfile] = MappingProx
         ClubType.GW: ClubSimulationProfile(5, 1.20, 9200, 900, 3.5),
         ClubType.SW: ClubSimulationProfile(5, 1.19, 9800, 1000, 4.0),
         ClubType.LW: ClubSimulationProfile(5, 1.18, 10200, 1000, 4.0),
+        ClubType.PUTTER: ClubSimulationProfile(2.5, 1.45, 80, 40, 0.3),
         ClubType.UNKNOWN: ClubSimulationProfile(15, 1.35, 5000, 800, 3.0),
     }
 )
 
 
 SHOT_SIMULATION_DEFAULTS = ShotSimulationDefaults()
+PUTT_SIMULATION_DEFAULTS = PuttSimulationDefaults()
 
 
 def get_club_physics(club_type: ClubType) -> ClubPhysics:

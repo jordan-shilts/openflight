@@ -99,7 +99,9 @@ requirements and setup specific to GSPro.
 
 When you change clubs in GSPro, it sends a player update (code 201). OpenFlight
 applies it: the current club used for shot tagging and the carry/spin model
-follows GSPro. Putts (`PT`) are out of scope and ignored.
+follows GSPro. The putter (`PT`) selects OpenFlight's Putter club; see
+[Putts](index.md#putts) for how putts are scored and why the radar cannot
+capture them yet.
 
 ## Troubleshooting
 

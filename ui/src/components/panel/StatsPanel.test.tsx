@@ -104,6 +104,38 @@ describe('StatsPanel', () => {
     expect(html).toContain('metric-card__value">96.0<'); // max
   });
 
+  it('averages the carry Live shows, committed carry first', () => {
+    const html = render([
+      makeShot({ estimated_carry_yards: 119, carry_spin_adjusted: 143, timestamp: 'a' }),
+      makeShot({ estimated_carry_yards: 151, carry_spin_adjusted: null, timestamp: 'b' }),
+    ]);
+
+    expect(html).toContain('metric-card__value">147<');
+  });
+
+  it('keeps putts out of Avg carry when they share the view with full swings', () => {
+    const html = render([
+      makeShot({ carry_spin_adjusted: 200, timestamp: 'a' }),
+      makeShot({ club: 'putter', carry_spin_adjusted: 0, roll_distance_ft: 12, timestamp: 'b' }),
+    ]);
+
+    expect(html).toContain('>Avg carry<');
+    expect(html).toContain('metric-card__value">200<');
+    expect(html).not.toContain('>Avg roll<');
+  });
+
+  it('shows Avg roll in feet instead of Avg carry for the Putter filter', () => {
+    const putt = (roll: number, timestamp: string) =>
+      makeShot({ club: 'putter', ball_speed_mph: 6, carry_spin_adjusted: 0, roll_distance_ft: roll, timestamp });
+    const html = render([makeShot({ timestamp: 'a' }), putt(10, 'b'), putt(21, 'c')], 'putter');
+
+    expect(html).toContain('PUTTER (2)');
+    expect(html).toContain('stats-panel__grid--of-6');
+    expect(html).toContain('>Avg roll<');
+    expect(html).not.toContain('>Avg carry<');
+    expect(html).toMatch(/metric-card__value">16<[\s\S]*?metric-card__unit[^>]*>ft</);
+  });
+
   it('keeps the tile count stable when club speed is missing', () => {
     // Six tiles either way, so the 3x2 grid never reflows.
     const html = render([makeShot({ club_speed_mph: null, smash_factor: null })]);

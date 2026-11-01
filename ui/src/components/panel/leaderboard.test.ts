@@ -119,6 +119,27 @@ describe('buildLeaderboard', () => {
     expect(rows.every((row) => row.shotCount === 0)).toBe(true);
   });
 
+  it('uses the carry Live shows, so committed carry beats the speed estimate', () => {
+    const rows = buildLeaderboard(
+      roster,
+      [shot('jor', 104, 119, { carry_spin_adjusted: 143 }), shot('jor', 100, 130, { carry_spin_adjusted: 137 })],
+      'imperial'
+    );
+
+    expect(texts(rows[0]).slice(2)).toEqual(['140', '143']);
+  });
+
+  it('leaves putts out of carry and gives a putting-only profile no carry to lead', () => {
+    const putt = (profileId: string, roll: number) =>
+      shot(profileId, 6, 8, { club: 'putter', carry_spin_adjusted: 0, roll_distance_ft: roll });
+    const rows = buildLeaderboard(roster, [shot('jor', 150, 250), putt('jor', 12), putt('alx', 30)], 'imperial');
+
+    expect(texts(rows[0]).slice(2)).toEqual(['250', '250']);
+    expect(texts(rows[1]).slice(2)).toEqual([NO_VALUE, NO_VALUE]);
+    expect(best(rows[0])).toEqual(['avg_ball', 'max_ball', 'avg_carry', 'max_carry']);
+    expect(best(rows[1])).toEqual([]);
+  });
+
   it('formats in the display unit', () => {
     const [jordan] = buildLeaderboard(roster, [shot('jor', 100, 100)], 'metric');
 
