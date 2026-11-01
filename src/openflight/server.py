@@ -24,7 +24,13 @@ from flask import Flask, Response, jsonify, request, send_file, send_from_direct
 from flask_cors import CORS
 from flask_socketio import SocketIO
 
-from .ballistics import display_trajectory, resolve_launch, simulate
+from .ballistics import (
+    display_trajectory,
+    is_putt,
+    putt_roll_distance_ft,
+    resolve_launch,
+    simulate,
+)
 from .ble.protocol import (
     FEATURES as PHONE_FEATURES,
     build_club_event,
@@ -38,6 +44,7 @@ from .ble.protocol import (
 )
 from .clubs import ClubType
 from .clubs.physics import (
+    PUTT_SIMULATION_DEFAULTS,
     SHOT_SIMULATION_DEFAULTS,
     get_club_physics,
     get_club_simulation_profile,
@@ -536,6 +543,9 @@ def estimate_launch_angle(
     Returns (vertical_angle, confidence).
     """
     physics = get_club_physics(club)
+    if club is ClubType.PUTTER:
+        # The full-swing model and its 5 degree floor would turn a putt into a chip.
+        return (physics.optimal_launch_deg, 0.2)
 
     # Slower than average → higher launch, faster → lower launch
     speed_delta = ball_speed_mph - physics.average_ball_speed_mph
@@ -987,6 +997,7 @@ def shot_to_dict(shot: Shot) -> dict:
         "spin_phase_snr": 2,
         "spin_phase_agreement_pct": 1,
         "carry_spin_adjusted": None,
+        "roll_distance_ft": 1,
     }.items():
         if data[field] is not None:
             data[field] = round(data[field], digits) if digits is not None else round(data[field])
@@ -3709,8 +3720,14 @@ def _finalize_shot_detected(
     # angle missing → resolve_launch returns None). This is the only place
     # that writes carry_spin_adjusted for a live shot. Mock shots simulate too;
     # the UI trajectory comes from the same run, so it lands at the carry.
-    conditions = resolve_launch(shot) if ballistics_enabled else None
-    if conditions is not None:
+    # A putt never flies: it gets Open-Birdie's roll distance and no carry.
+    putt = is_putt(shot)
+    conditions = resolve_launch(shot) if ballistics_enabled and not putt else None
+    if putt:
+        shot.roll_distance_ft = putt_roll_distance_ft(shot.ball_speed_mph)
+        shot.carry_spin_adjusted = 0.0
+        logger.info("[SERVER] Putt roll: %.1f ft", shot.roll_distance_ft)
+    elif conditions is not None:
         trajectory = simulate(conditions)
         shot.carry_spin_adjusted = trajectory.carry_yards
         shot.trajectory = display_trajectory(trajectory)
@@ -4669,6 +4686,63 @@ class MockLaunchMonitor:
             setattr(shot, field, value)
         return (time.monotonic() - started) * 1000.0
 
+    def _simulated_swing(self, ball_speed: Optional[float]) -> tuple[float, float, float, float]:
+        """Full-swing ball speed, spin, vertical launch and attack angle."""
+        physics = get_club_physics(self._current_club)
+        profile = get_club_simulation_profile(self._current_club)
+        defaults = SHOT_SIMULATION_DEFAULTS
+        if ball_speed is None:
+            ball_speed = max(
+                defaults.min_ball_speed_mph,
+                min(
+                    defaults.max_ball_speed_mph,
+                    random.gauss(
+                        physics.average_ball_speed_mph,
+                        profile.ball_speed_std_dev_mph,
+                    ),
+                ),
+            )
+        spin_rpm = max(
+            defaults.min_spin_rpm,
+            random.gauss(profile.average_spin_rpm, profile.spin_std_dev_rpm),
+        )
+        launch_v = max(
+            defaults.min_launch_deg,
+            random.gauss(physics.optimal_launch_deg, profile.launch_std_dev_deg),
+        )
+        club_aoa = random.gauss(
+            defaults.angle_of_attack_mean_deg,
+            defaults.angle_of_attack_std_dev_deg,
+        )
+        return ball_speed, spin_rpm, launch_v, club_aoa
+
+    def _simulated_putt(self, ball_speed: Optional[float]) -> tuple[float, float, float, float]:
+        """Putt ball speed, spin, vertical launch and attack angle."""
+        physics = get_club_physics(ClubType.PUTTER)
+        profile = get_club_simulation_profile(ClubType.PUTTER)
+        defaults = PUTT_SIMULATION_DEFAULTS
+        if ball_speed is None:
+            ball_speed = max(
+                defaults.min_ball_speed_mph,
+                random.gauss(physics.average_ball_speed_mph, profile.ball_speed_std_dev_mph),
+            )
+        spin_rpm = max(
+            defaults.min_spin_rpm,
+            random.gauss(profile.average_spin_rpm, profile.spin_std_dev_rpm),
+        )
+        launch_v = min(
+            defaults.max_launch_deg,
+            max(
+                defaults.min_launch_deg,
+                random.gauss(physics.optimal_launch_deg, profile.launch_std_dev_deg),
+            ),
+        )
+        club_aoa = random.gauss(
+            defaults.angle_of_attack_mean_deg,
+            defaults.angle_of_attack_std_dev_deg,
+        )
+        return ball_speed, spin_rpm, launch_v, club_aoa
+
     def simulate_shot(self, ball_speed: float = None, *, fail: bool = False):
         """Simulate a shot for testing using realistic TrackMan-based values.
 
@@ -4681,36 +4755,18 @@ class MockLaunchMonitor:
             self._notify_processing("failed", pause=False)
             return None
 
-        physics = get_club_physics(self._current_club)
         profile = get_club_simulation_profile(self._current_club)
         defaults = SHOT_SIMULATION_DEFAULTS
-
-        if ball_speed is None:
-            ball_speed = max(
-                defaults.min_ball_speed_mph,
-                min(
-                    defaults.max_ball_speed_mph,
-                    random.gauss(
-                        physics.average_ball_speed_mph,
-                        profile.ball_speed_std_dev_mph,
-                    ),
-                ),
-            )
+        simulate_launch = (
+            self._simulated_putt if self._current_club is ClubType.PUTTER else self._simulated_swing
+        )
+        ball_speed, spin_rpm, launch_v, club_aoa = simulate_launch(ball_speed)
 
         smash_factor = profile.average_smash + random.uniform(
             -defaults.smash_variation, defaults.smash_variation
         )
         club_speed = ball_speed / smash_factor
 
-        spin_rpm = max(
-            defaults.min_spin_rpm,
-            random.gauss(profile.average_spin_rpm, profile.spin_std_dev_rpm),
-        )
-
-        launch_v = max(
-            defaults.min_launch_deg,
-            random.gauss(physics.optimal_launch_deg, profile.launch_std_dev_deg),
-        )
         launch_confidence = round(
             random.uniform(defaults.confidence_min, defaults.confidence_max), 2
         )
@@ -4719,14 +4775,6 @@ class MockLaunchMonitor:
             {field: None for field in self._simulated_direction(launch_confidence)}
             if self.enrichment_ms > 0
             else self._simulated_direction(launch_confidence)
-        )
-
-        club_aoa = round(
-            random.gauss(
-                defaults.angle_of_attack_mean_deg,
-                defaults.angle_of_attack_std_dev_deg,
-            ),
-            1,
         )
 
         shot = Shot(
@@ -4741,7 +4789,7 @@ class MockLaunchMonitor:
             launch_angle_vertical_confidence=launch_confidence,
             launch_angle_vertical_source="mock",
             angle_source="mock",
-            club_angle_deg=club_aoa,
+            club_angle_deg=round(club_aoa, 1),
             mode="mock",
             **direction,
         )

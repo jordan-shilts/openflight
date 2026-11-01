@@ -78,6 +78,22 @@ class ShotSimulationDefaults:
     spin_axis_error_max_abs_deg: float = 5.0
 
 
+@dataclass(frozen=True)
+class PuttSimulationDefaults:
+    """Development putt bounds, used instead of the full-swing clamps.
+
+    Launch stays under 2 degrees so Open-Birdie rolls the shot as a putt, and a
+    putter meets the ball slightly on the way up rather than descending.
+    """
+
+    min_ball_speed_mph: float = 1.5
+    min_launch_deg: float = 0.5
+    max_launch_deg: float = 1.9
+    min_spin_rpm: float = 0.0
+    angle_of_attack_mean_deg: float = 2.0
+    angle_of_attack_std_dev_deg: float = 1.0
+
+
 CLUB_PHYSICS: Mapping[ClubType, ClubPhysics] = MappingProxyType(
     {
         ClubType.DRIVER: ClubPhysics(10.5, 11.0, 143, 0.15, 2700, 1.48, 1.0, 1.48),
@@ -134,6 +150,7 @@ CLUB_SIMULATION_PROFILES: Mapping[ClubType, ClubSimulationProfile] = MappingProx
 
 
 SHOT_SIMULATION_DEFAULTS = ShotSimulationDefaults()
+PUTT_SIMULATION_DEFAULTS = PuttSimulationDefaults()
 
 
 def get_club_physics(club_type: ClubType) -> ClubPhysics:
