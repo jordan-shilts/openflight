@@ -30,6 +30,7 @@ import {
   PlayerStrip,
   ShotsPanel,
   StatsPanel,
+  type StatsView,
   clubSections,
   trainingImplementSections,
   type PanelView,
@@ -116,6 +117,7 @@ function AppContent() {
   const [profileDialog, setProfileDialog] = useState<{ mode: 'add' | 'rename'; target: Profile | null } | null>(null);
   const [profileDialogName, setProfileDialogName] = useState('');
   const [clearSessionOpen, setClearSessionOpen] = useState(false);
+  const [statsView, setStatsView] = useState<StatsView>('me');
   const { activeReplay, openReplay, closeReplay, reportPlaybackError } = useCameraReplayController();
 
   // Reflect a server-pushed club change (e.g. the club changed in the connected
@@ -360,6 +362,9 @@ function AppContent() {
             activeClub={selectedClub}
             profileId={activeProfileId}
             profileName={activeProfileName}
+            profiles={profiles}
+            view={statsView}
+            onChangeView={setStatsView}
             headerAction={clearSessionAction}
           />
         )}

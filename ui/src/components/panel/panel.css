@@ -804,6 +804,92 @@
   letter-spacing: -0.03em;
 }
 
+.stats-leaderboard {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--color-border);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.stats-leaderboard__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-leaderboard__table th,
+.stats-leaderboard__table td {
+  padding: 0.45rem 0.75rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.stats-leaderboard__table thead th {
+  position: sticky;
+  top: 0;
+  padding-block: 0.4rem;
+  background: var(--color-surface);
+  font-weight: 600;
+  font-size: 0.5625rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.stats-leaderboard__table th:first-child {
+  padding-left: 26px;
+}
+
+.stats-leaderboard__table th:last-child,
+.stats-leaderboard__table td:last-child {
+  padding-right: 26px;
+}
+
+.stats-leaderboard__row {
+  border-top: 1px solid var(--color-border-soft);
+}
+
+.stats-leaderboard__name {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 700;
+  font-size: 0.875rem;
+  color: var(--color-text);
+}
+
+.stats-leaderboard__table .stats-leaderboard__num {
+  text-align: right;
+}
+
+.stats-leaderboard__row .stats-leaderboard__num {
+  font-weight: 700;
+  font-size: 1.125rem;
+  letter-spacing: -0.02em;
+  color: var(--color-text);
+}
+
+.stats-leaderboard__row .stats-leaderboard__best {
+  color: var(--color-accent);
+}
+
+.stats-leaderboard__row--active {
+  background: color-mix(in srgb, var(--color-accent) 7%, transparent);
+}
+
+.stats-leaderboard__row--active .stats-leaderboard__name {
+  box-shadow: inset 5px 0 0 var(--color-accent-block);
+}
+
+.stats-leaderboard__row--empty .stats-leaderboard__name,
+.stats-leaderboard__row--empty .stats-leaderboard__num {
+  color: var(--color-text-faint);
+}
+
 /* --------------------------------------------------------- profiles panel -- */
 
 .profiles-panel__grid {
@@ -1630,6 +1716,15 @@
 
   .stats-panel__grid .metric-card {
     padding-inline: 18px;
+  }
+
+  .stats-leaderboard__table th:first-child {
+    padding-left: 18px;
+  }
+
+  .stats-leaderboard__table th:last-child,
+  .stats-leaderboard__table td:last-child {
+    padding-right: 18px;
   }
 
   .shots-panel__columns,

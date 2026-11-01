@@ -84,6 +84,9 @@ export const fr: Messages = {
   'stats.avgClub': 'Moy. club',
   'stats.avgSmash': 'Moy. smash',
   'stats.last': 'Dernier',
+  'stats.longestCarry': 'Plus long',
+  'stats.leaderboard': 'Classement',
+  'stats.justMe': 'Moi seul',
 
   'shots.noShots': 'Aucun coup pour l’instant',
   'shots.noShotsDetail': 'Les coups enregistrés apparaissent ici',

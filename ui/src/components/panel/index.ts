@@ -10,7 +10,7 @@ export { ProfilesPanel } from './ProfilesPanel';
 export { ProfileNameDialog } from './ProfileNameDialog';
 export { ClearSessionDialog } from './ClearSessionDialog';
 export { SimulateBubble } from './SimulateBubble';
-export { StatsPanel } from './StatsPanel';
+export { StatsPanel, type StatsView } from './StatsPanel';
 export { ShotsPanel } from './ShotsPanel';
 export { CameraPanel } from './CameraPanel';
 export { PANEL_VIEWS, type PanelView } from './views';

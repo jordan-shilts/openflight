@@ -84,6 +84,9 @@ export const pt: Messages = {
   'stats.avgClub': 'Média taco',
   'stats.avgSmash': 'Média smash',
   'stats.last': 'Último',
+  'stats.longestCarry': 'Mais longo',
+  'stats.leaderboard': 'Classificação',
+  'stats.justMe': 'Só eu',
 
   'shots.noShots': 'Ainda sem tacadas',
   'shots.noShotsDetail': 'As tacadas gravadas aparecem aqui',

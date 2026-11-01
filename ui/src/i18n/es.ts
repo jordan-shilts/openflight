@@ -84,6 +84,9 @@ export const es: Messages = {
   'stats.avgClub': 'Media palo',
   'stats.avgSmash': 'Media smash',
   'stats.last': 'Último',
+  'stats.longestCarry': 'Más largo',
+  'stats.leaderboard': 'Clasificación',
+  'stats.justMe': 'Solo yo',
 
   'shots.noShots': 'Aún no hay golpes',
   'shots.noShotsDetail': 'Los golpes grabados aparecen aquí',
