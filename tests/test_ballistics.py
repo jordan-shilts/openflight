@@ -1,5 +1,6 @@
 """Tests for the ballistics flight simulator and launch resolution."""
 
+import json
 import math
 from datetime import datetime
 
@@ -10,13 +11,18 @@ from openflight.ballistics import (
     CD_POLY,
     CL_POLY,
     CLUB_TYPICAL_SPIN_RPM,
+    DISPLAY_TRAJECTORY_MAX_POINTS,
+    FT_PER_YD,
     MPH_TO_MPS,
     SP_FIT_MAX,
     SPIN_DECAY_RATE,
     LaunchConditions,
+    Trajectory,
+    TrajectoryPoint,
     _cd,
     _cl,
     _poly,
+    display_trajectory,
     resolve_launch,
     simulate,
 )
@@ -186,6 +192,103 @@ class TestSimulate:
     def test_total_distance_includes_rollout(self):
         traj = simulate(_driver())
         assert traj.total_yards > traj.carry_yards
+
+
+class TestDisplayTrajectory:
+    """The compact side-view payload the UI draws for each shot."""
+
+    def test_driver_is_downsampled_to_the_point_budget(self):
+        traj = simulate(_driver())
+        assert len(traj.points) > 2 * DISPLAY_TRAJECTORY_MAX_POINTS
+
+        points = display_trajectory(traj)["points"]
+
+        assert DISPLAY_TRAJECTORY_MAX_POINTS <= len(points) <= DISPLAY_TRAJECTORY_MAX_POINTS + 1
+        assert all(len(point) == 4 for point in points)
+
+    def test_starts_at_launch_and_lands_at_carry(self):
+        traj = simulate(_driver())
+
+        display = display_trajectory(traj)
+
+        assert display["points"][0] == [0.0, 0.0, 0.0, 0.0]
+        distance, height, lateral, time_s = display["points"][-1]
+        assert distance == pytest.approx(traj.carry_yards, abs=0.05)
+        assert height == pytest.approx(0.0, abs=0.05)
+        assert lateral == pytest.approx(traj.lateral_yards, abs=0.05)
+        assert time_s == pytest.approx(traj.flight_time_s, abs=0.005)
+        assert display["carry_yards"] == pytest.approx(traj.carry_yards, abs=0.05)
+        assert display["flight_time_s"] == pytest.approx(traj.flight_time_s, abs=0.005)
+        assert display["landing_angle_deg"] == pytest.approx(traj.landing_angle_deg, abs=0.05)
+
+    def test_heights_are_in_feet_and_peak_at_the_apex(self):
+        traj = simulate(_driver())
+
+        display = display_trajectory(traj)
+
+        highest_sample_ft = max(point.z for point in traj.points) * FT_PER_YD
+        assert max(point[1] for point in display["points"]) == round(highest_sample_ft, 1)
+        assert display["apex_ft"] == pytest.approx(traj.apex_yards * FT_PER_YD, abs=0.05)
+        assert display["apex_ft"] == pytest.approx(highest_sample_ft, abs=0.1)
+
+    def test_keeps_an_apex_sample_the_even_grid_would_skip(self):
+        heights = [0.0, 5.0, 9.0, 11.0, 12.0, 11.5, 10.0, 7.0, 4.0, 0.0]
+        points = [
+            TrajectoryPoint(t=0.1 * i, x=10.0 * i, y=0.0, z=z, speed_mph=100.0, spin_rpm=3000.0)
+            for i, z in enumerate(heights)
+        ]
+        traj = Trajectory(
+            points=points,
+            carry_yards=90.0,
+            apex_yards=12.0,
+            lateral_yards=0.0,
+            flight_time_s=0.9,
+            landing_speed_mph=60.0,
+            landing_angle_deg=40.0,
+        )
+
+        kept = display_trajectory(traj, max_points=4)["points"]
+
+        assert [point[0] for point in kept] == [0.0, 30.0, 40.0, 60.0, 90.0]
+        assert max(point[1] for point in kept) == 12.0 * FT_PER_YD
+
+    def test_points_run_forward_in_time_and_distance(self):
+        points = display_trajectory(simulate(_driver()))["points"]
+
+        times = [point[3] for point in points]
+        distances = [point[0] for point in points]
+        assert times == sorted(set(times))
+        assert distances == sorted(distances)
+
+    def test_short_flight_keeps_every_sample(self):
+        chip = LaunchConditions(
+            ball_speed_mph=40.0,
+            launch_angle_v=30.0,
+            launch_angle_h=0.0,
+            spin_rpm=6000,
+            spin_axis_deg=0.0,
+            spin_source="measured",
+        )
+        traj = simulate(chip)
+        assert len(traj.points) <= DISPLAY_TRAJECTORY_MAX_POINTS
+
+        points = display_trajectory(traj)["points"]
+
+        assert len(points) == len(traj.points)
+        assert points[-1][0] == pytest.approx(traj.carry_yards, abs=0.05)
+
+    def test_lateral_offset_follows_the_curve(self):
+        traj = simulate(_driver(axis=10.0))
+
+        points = display_trajectory(traj)["points"]
+
+        assert points[-1][2] == pytest.approx(traj.lateral_yards, abs=0.05)
+        assert points[-1][2] > 3.0
+
+    def test_payload_stays_small(self):
+        display = display_trajectory(simulate(_driver()))
+
+        assert len(json.dumps(display, separators=(",", ":"))) < 2000
 
 
 class TestAeroCoefficientSafeguards:

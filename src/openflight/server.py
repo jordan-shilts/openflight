@@ -24,7 +24,7 @@ from flask import Flask, Response, jsonify, request, send_file, send_from_direct
 from flask_cors import CORS
 from flask_socketio import SocketIO
 
-from .ballistics import resolve_launch, simulate
+from .ballistics import display_trajectory, resolve_launch, simulate
 from .ble.protocol import (
     FEATURES as PHONE_FEATURES,
     build_club_event,
@@ -991,6 +991,7 @@ def shot_to_dict(shot: Shot) -> dict:
         if data[field] is not None:
             data[field] = round(data[field], digits) if digits is not None else round(data[field])
     data["carry_range"] = [round(value) for value in data["carry_range"]]
+    data["trajectory"] = shot.trajectory
     return data
 
 
@@ -3706,44 +3707,45 @@ def _finalize_shot_detected(
     # ballistics is enabled and a vertical launch angle is available; fall
     # back to the table estimator otherwise (either ballistics disabled or
     # angle missing → resolve_launch returns None). This is the only place
-    # that writes carry_spin_adjusted for a live shot.
-    if shot.mode != "mock":
-        conditions = resolve_launch(shot) if ballistics_enabled else None
-        if conditions is not None:
-            trajectory = simulate(conditions)
-            shot.carry_spin_adjusted = trajectory.carry_yards
-            logger.info(
-                "[SERVER] Ballistic carry: %.0f yds (spin: %.0f rpm, source: %s)",
-                shot.carry_spin_adjusted,
-                conditions.spin_rpm,
-                conditions.spin_source,
-            )
-        else:
-            has_reliable_spin = (
-                shot.spin_rpm
-                and shot.spin_rpm > 0
-                and shot.spin_confidence is not None
-                and shot.spin_confidence >= SPIN_CONFIDENCE_RELIABLE
-            )
-            spin_for_carry = (
-                shot.spin_rpm
-                if has_reliable_spin
-                else get_optimal_spin_for_ball_speed(shot.ball_speed_mph, shot.club)
-            )
-            shot.carry_spin_adjusted = estimate_carry_with_spin(
-                shot.ball_speed_mph,
-                spin_for_carry,
-                shot.club,
-                club_speed_mph=shot.club_speed_mph,
-            )
-            reason = "ballistics disabled" if not ballistics_enabled else "no launch angle"
-            logger.info(
-                "[SERVER] Table carry (%s): %.0f yds (spin: %.0f rpm%s)",
-                reason,
-                shot.carry_spin_adjusted,
-                spin_for_carry,
-                "" if shot.spin_rpm and shot.spin_rpm > 0 else " avg",
-            )
+    # that writes carry_spin_adjusted for a live shot. Mock shots simulate too;
+    # the UI trajectory comes from the same run, so it lands at the carry.
+    conditions = resolve_launch(shot) if ballistics_enabled else None
+    if conditions is not None:
+        trajectory = simulate(conditions)
+        shot.carry_spin_adjusted = trajectory.carry_yards
+        shot.trajectory = display_trajectory(trajectory)
+        logger.info(
+            "[SERVER] Ballistic carry: %.0f yds (spin: %.0f rpm, source: %s)",
+            shot.carry_spin_adjusted,
+            conditions.spin_rpm,
+            conditions.spin_source,
+        )
+    elif shot.mode != "mock":
+        has_reliable_spin = (
+            shot.spin_rpm
+            and shot.spin_rpm > 0
+            and shot.spin_confidence is not None
+            and shot.spin_confidence >= SPIN_CONFIDENCE_RELIABLE
+        )
+        spin_for_carry = (
+            shot.spin_rpm
+            if has_reliable_spin
+            else get_optimal_spin_for_ball_speed(shot.ball_speed_mph, shot.club)
+        )
+        shot.carry_spin_adjusted = estimate_carry_with_spin(
+            shot.ball_speed_mph,
+            spin_for_carry,
+            shot.club,
+            club_speed_mph=shot.club_speed_mph,
+        )
+        reason = "ballistics disabled" if not ballistics_enabled else "no launch angle"
+        logger.info(
+            "[SERVER] Table carry (%s): %.0f yds (spin: %.0f rpm%s)",
+            reason,
+            shot.carry_spin_adjusted,
+            spin_for_carry,
+            "" if shot.spin_rpm and shot.spin_rpm > 0 else " avg",
+        )
     if shot.spin_rejection_reason:
         logger.info(
             "[SERVER] Spin unavailable: %s (snr=%s, candidate=%s rpm)",
@@ -4284,6 +4286,7 @@ def swing_speed_to_shot_dict(event: SwingSpeedEvent) -> dict:
         "spin_phase_confirmed": None,
         "spin_rejection_reason": None,
         "carry_spin_adjusted": None,
+        "trajectory": None,
         "mode": event.mode,
         "swing_speed_duration_ms": round(event.duration_ms),
         "swing_speed_reading_count": event.reading_count,

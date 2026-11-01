@@ -29,6 +29,7 @@ from .launch_monitor import SPIN_CONFIDENCE_HIGH, Shot
 MPH_TO_MPS = 0.44704
 MPS_TO_MPH = 1.0 / MPH_TO_MPS
 M_TO_YD = 1.09361
+FT_PER_YD = 3.0
 
 # USGA maximum-conforming ball (45.93 g, 42.7 mm diameter).
 # Using the max — not an average — so carry estimates are upper-bounded by
@@ -76,6 +77,8 @@ MAX_FLIGHT_SECONDS = 15.0
 # runs at DT_SECONDS; this only controls how many points the caller sees,
 # keeping payload size reasonable for UI/log consumers.
 SAMPLE_INTERVAL_S = 0.05
+# A driver yields ~140 samples; 60 still draw a smooth side view in ~1.5 KB.
+DISPLAY_TRAJECTORY_MAX_POINTS = 60
 
 # Club-typical spin (RPM) from TrackMan PGA Tour averages.
 # Used as fallback when measured spin is missing or low-confidence.
@@ -125,6 +128,37 @@ class Trajectory:
         # course-play distance.
         rollout = max(0.0, 30.0 * math.cos(math.radians(self.landing_angle_deg)))
         return self.carry_yards + rollout
+
+
+def display_trajectory(
+    trajectory: Trajectory, max_points: int = DISPLAY_TRAJECTORY_MAX_POINTS
+) -> dict:
+    """
+    Downsample a simulated flight into the UI's side-view payload.
+
+    Each point is ``[distance_yd, height_ft, lateral_yd, time_s]``: downrange
+    distance, height, lateral offset (+right) and time since launch. The launch
+    point, the landing point and the highest sample are always kept, so the
+    drawn curve peaks at the apex and ends at ``carry_yards``.
+    """
+    points = trajectory.points
+    if len(points) <= max_points:
+        kept = points
+    else:
+        step = (len(points) - 1) / (max_points - 1)
+        apex_index = max(range(len(points)), key=lambda index: points[index].z)
+        indices = {round(slot * step) for slot in range(max_points)} | {apex_index}
+        kept = [points[index] for index in sorted(indices)]
+
+    return {
+        "points": [
+            [round(p.x, 1), round(p.z * FT_PER_YD, 1), round(p.y, 1), round(p.t, 2)] for p in kept
+        ],
+        "carry_yards": round(trajectory.carry_yards, 1),
+        "apex_ft": round(trajectory.apex_yards * FT_PER_YD, 1),
+        "landing_angle_deg": round(trajectory.landing_angle_deg, 1),
+        "flight_time_s": round(trajectory.flight_time_s, 2),
+    }
 
 
 def resolve_launch(shot: Shot) -> Optional[LaunchConditions]:

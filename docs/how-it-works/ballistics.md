@@ -108,6 +108,13 @@ Shot finalization in the server is the only place that writes
 spin table otherwise. The same committed number is what the kiosk shows and
 what the simulator connectors receive.
 
+When the simulator runs, the UI shot payload also carries a `trajectory`: up to
+60 points (`[distance_yd, height_ft, lateral_yd, time_s]`) taken from that same
+flight, plus apex height, landing angle, flight time and carry. The Live
+screen's Flight view draws it, so its landing point always matches the Carry
+tile. Mock shots (`--mock`) run the simulator too. The points stay out of the
+session log, cloud uploads, phone events and simulator connectors.
+
 ## Disabling it
 
 ```bash
