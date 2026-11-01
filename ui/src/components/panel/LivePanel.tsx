@@ -6,7 +6,7 @@ import { useI18n } from '../../i18n/useI18n';
 import { useSharedFitFontSize } from '../../hooks/useFitFontSize';
 import { MetricCard } from '../ui/MetricCard';
 import { PanelHeader } from './PanelHeader';
-import { buildLiveMetrics, pinSelectedMetric } from './liveMetrics';
+import { buildLiveMetrics, leadMetricIds, pinSelectedMetric } from './liveMetrics';
 
 interface LivePanelProps {
   shot: Shot | null;
@@ -62,6 +62,7 @@ export function LivePanel({
     [displayedShot, unitSystem, swingStats, selectedMetricId, locale]
   );
   const selected = metrics[0] ?? null;
+  const leadIds = leadMetricIds(metrics);
   const gridRef = useSharedFitFontSize(
     metrics.length > 0,
     metrics.map((metric) => `${metric.value}:${metric.unit ?? ''}`).join('|')
@@ -106,6 +107,7 @@ export function LivePanel({
               confidenceLabel={metric.confidenceLabel}
               labelPosition="above"
               selected={metric.id === selected.id}
+              className={leadIds.includes(metric.id) ? 'live-panel__lead' : undefined}
               onClick={onSelectMetric ? () => onSelectMetric(metric.id) : undefined}
             />
           ))}

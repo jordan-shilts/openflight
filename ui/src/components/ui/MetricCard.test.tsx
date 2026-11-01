@@ -23,6 +23,12 @@ describe('MetricCard', () => {
     expect(html).toContain('metric-card--hero');
   });
 
+  it('appends a host class without dropping its own', () => {
+    const html = renderToString(<MetricCard value="133" label="Carry" className="live-panel__lead" />);
+
+    expect(html).toContain('class="metric-card metric-card--default metric-card--label-below live-panel__lead"');
+  });
+
   it('labels experimental spin without confidence dots', () => {
     const html = renderToString(<MetricCard value="8,750" unit="rpm" label="Spin Rate" confidence="experimental" />);
     expect(html).toContain('metric-card__confidence--experimental');

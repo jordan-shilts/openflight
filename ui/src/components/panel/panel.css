@@ -1806,3 +1806,104 @@
     padding: 1.25rem 1rem 1rem;
   }
 }
+
+/* ------------------------------------------- phone held upright (390x844) -- */
+/* Landscape kiosks never match, so their layout is untouched. */
+
+@media (max-width: 640px) and (orientation: portrait) {
+  .panel-header {
+    padding-inline: 16px;
+    gap: var(--space-sm);
+  }
+
+  .panel-header__actions {
+    gap: 6px;
+  }
+
+  .panel-header__actions .panel-action {
+    padding: 0 10px;
+  }
+
+  .stats-panel__chips {
+    padding-inline: 16px;
+  }
+
+  .stats-leaderboard__table th,
+  .stats-leaderboard__table td {
+    padding-inline: 0.3rem;
+  }
+
+  .stats-leaderboard__table th:first-child {
+    padding-left: 16px;
+  }
+
+  .stats-leaderboard__table th:last-child,
+  .stats-leaderboard__table td:last-child {
+    padding-right: 16px;
+  }
+
+  .stats-leaderboard__table thead th {
+    white-space: normal;
+  }
+
+  .stats-leaderboard__name {
+    max-width: 5.5rem;
+  }
+
+  .stats-leaderboard__row .stats-leaderboard__num {
+    font-size: 0.9375rem;
+  }
+
+  .panel-footer {
+    padding-inline: 10px;
+    gap: 10px;
+  }
+
+  .panel-footer__tabs {
+    max-width: 100%;
+    mask-image: linear-gradient(to right, black calc(100% - 1.5rem), transparent);
+  }
+
+  /* The tabs need the room; Live tiles carry their own units. */
+  .panel-footer__units {
+    display: none;
+  }
+
+  .live-panel__empty {
+    padding-inline: 16px;
+  }
+
+  .live-panel__empty-title {
+    font-size: clamp(2.5rem, 15vw, 7rem);
+  }
+
+  .live-panel__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: 1.4fr repeat(4, 1fr);
+  }
+
+  .live-panel__grid--of-5 {
+    grid-template-rows: 1.4fr repeat(2, 1fr);
+  }
+
+  .live-panel__grid .metric-card {
+    padding: 0.5rem 0.75rem;
+  }
+
+  .live-panel__grid .live-panel__lead {
+    order: -1;
+  }
+
+  .live-panel__grid .metric-card__value-row {
+    font-size: clamp(1.25rem, min(40cqi, 44cqb), 2.5rem);
+  }
+
+  /* em of the shared row size, so the fit still sizes every tile together. */
+  .live-panel__grid .live-panel__lead .metric-card__value {
+    font-size: 1.5em;
+  }
+
+  .live-panel__grid .live-panel__lead .metric-card__unit {
+    font-size: 0.63em;
+  }
+}

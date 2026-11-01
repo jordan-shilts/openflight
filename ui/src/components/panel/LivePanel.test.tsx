@@ -191,6 +191,29 @@ describe('LivePanel', () => {
     expect(header).toContain('panel-action');
   });
 
+  it('marks the pinned metric and carry as the phone lead tiles, and only those', () => {
+    const leadLabels = (html: string) =>
+      [...html.matchAll(/class="metric-card[^"]*live-panel__lead"[^>]*>[\s\S]*?metric-card__label[^>]*>([^<]+)/g)].map(
+        (match) => match[1]
+      );
+
+    expect(leadLabels(render(makeShot()))).toEqual(['Ball speed', 'Carry']);
+    expect(leadLabels(render(makeShot(), undefined, 'spin'))).toEqual(['Spin', 'Carry']);
+    expect(leadLabels(render(makeShot(), undefined, 'carry'))).toEqual(['Carry', 'Ball speed']);
+  });
+
+  it('stacks the phone layout under a portrait-only query, leaving the kiosk grid alone', () => {
+    const css = readFileSync(fileURLToPath(new URL('./panel.css', import.meta.url)), 'utf8');
+    const phone = css.match(/@media \(max-width: 640px\) and \(orientation: portrait\) \{([\s\S]*)\n\}/)?.[1] ?? '';
+
+    expect(phone).toMatch(/\.live-panel__grid \{[^}]*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+    expect(phone).toMatch(/\.live-panel__grid \.live-panel__lead \{[^}]*order: -1/);
+    expect(phone).toMatch(/\.live-panel__lead \.metric-card__value \{[^}]*font-size: [\d.]+em/);
+    expect(phone).not.toMatch(/font-size: [\d.]+px/);
+    expect(css).toMatch(/\.live-panel__grid \{[^}]*grid-template-columns: repeat\(5, 1fr\)/);
+    expect(css.indexOf('live-panel__lead')).toBeGreaterThan(css.indexOf('@media (max-width: 640px)'));
+  });
+
   it('puts the player strip in the header, after the title and before the actions, with or without a shot', () => {
     const renderWithStrip = (shot: Shot | null) =>
       text(
