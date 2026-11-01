@@ -12,6 +12,10 @@ describe('initialPickerSection', () => {
     expect(initialPickerSection(clubs, 'pw')).toBe('Irons');
   });
 
+  it('opens Putter when the putter is selected', () => {
+    expect(initialPickerSection(clubs, 'putter')).toBe('Putter');
+  });
+
   it('falls back to the first section when the id is unknown', () => {
     expect(initialPickerSection(clubs, 'not-a-club')).toBe('Irons');
   });

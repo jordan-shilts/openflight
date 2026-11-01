@@ -176,6 +176,7 @@ export const pt: Messages = {
   'clubGroup.Irons': 'Ferros',
   'clubGroup.Hybrids': 'Híbridos',
   'clubGroup.Woods': 'Madeiras',
+  'clubGroup.Putter': 'Putter',
   'clubGroup.General': 'Geral',
 
   'shutdown.pendingAria': 'Desligando o OpenFlight',

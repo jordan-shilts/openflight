@@ -15,6 +15,10 @@ describe('clubs data', () => {
     expect(driver?.name).toBe('Driver');
   });
 
+  it('offers the putter in its own group as PT', () => {
+    expect(CLUBS_BY_TYPE.Putter).toEqual([{ id: 'putter', label: 'PT', name: 'Putter' }]);
+  });
+
   it('has unique club ids', () => {
     const ids = ALL_CLUBS.map((c) => c.id);
     expect(new Set(ids).size).toBe(ids.length);
@@ -25,6 +29,7 @@ describe('getClubName', () => {
   it('returns the prose name used in the header', () => {
     expect(getClubName('driver')).toBe('Driver');
     expect(getClubName('7-iron')).toBe('7 Iron');
+    expect(getClubName('putter')).toBe('Putter');
   });
 
   it('falls back to the id when the club is unknown', () => {

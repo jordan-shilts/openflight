@@ -174,6 +174,7 @@ export const en = {
   'clubGroup.Irons': 'Irons',
   'clubGroup.Hybrids': 'Hybrids',
   'clubGroup.Woods': 'Woods',
+  'clubGroup.Putter': 'Putter',
   'clubGroup.General': 'General',
 
   'shutdown.pendingAria': 'Shutting down OpenFlight',
