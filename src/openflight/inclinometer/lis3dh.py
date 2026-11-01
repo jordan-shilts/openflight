@@ -3,39 +3,21 @@
 from __future__ import annotations
 
 import time
-from typing import Protocol
 
+from .i2c import AccelerometerIdentityError, SMBusLike, open_smbus
 from .models import AccelerationSample
 
 
-class SMBusLike(Protocol):  # pylint: disable=unnecessary-ellipsis
-    """Subset of smbus2 used by the driver, allowing deterministic tests."""
-
-    def read_byte_data(self, address: int, register: int) -> int:
-        """Read one register byte."""
-        ...  # pylint: disable=unnecessary-ellipsis
-
-    def write_byte_data(self, address: int, register: int, value: int) -> None:
-        """Write one register byte."""
-        ...  # pylint: disable=unnecessary-ellipsis
-
-    def read_i2c_block_data(self, address: int, register: int, length: int) -> list[int]:
-        """Read a contiguous register block."""
-        ...  # pylint: disable=unnecessary-ellipsis
-
-    def close(self) -> None:
-        """Close the bus."""
-        ...  # pylint: disable=unnecessary-ellipsis
-
-
-class LIS3DHIdentityError(RuntimeError):
+class LIS3DHIdentityError(AccelerometerIdentityError):
     """Raised when the expected LIS3DH identity register is not present."""
 
 
 class LIS3DH:
     """Read a LIS3DH configured for +/-2g high-resolution measurements."""
 
+    NAME = "lis3dh"
     DEFAULT_ADDRESS = 0x18
+    ADDRESSES = (0x18, 0x19)
     WHO_AM_I = 0x0F
     WHO_AM_I_VALUE = 0x33
     CTRL_REG1 = 0x20
@@ -50,14 +32,15 @@ class LIS3DH:
         address: int = DEFAULT_ADDRESS,
         bus: SMBusLike | None = None,
     ):
-        if bus is None:
-            from smbus2 import SMBus  # pylint: disable=import-outside-toplevel,import-error
-
-            bus = SMBus(bus_number)
-        self.bus = bus
+        self.bus = open_smbus(bus_number) if bus is None else bus
         self.bus_number = bus_number
         self.address = address
         self._closed = False
+
+    @classmethod
+    def identifies(cls, identity: int) -> bool:
+        """Return whether a WHO_AM_I value belongs to this chip."""
+        return identity == cls.WHO_AM_I_VALUE
 
     def initialize(self) -> None:
         """Verify identity and enable 100 Hz, high-resolution XYZ sampling."""

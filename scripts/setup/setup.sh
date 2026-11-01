@@ -7,6 +7,7 @@
 #   - OPS243-A rolling buffer flash config
 #   - K-LD7 device naming + FTDI low-latency rules
 #   - Optional battery-provider telemetry
+#   - BlueZ config for the BLE phone app (no pairing prompts)
 #   - Auto-start on boot (systemd service)
 #   - Desktop shortcut
 #
@@ -174,9 +175,9 @@ log "Activated virtual environment"
 # Install Python dependencies
 log "Installing Python dependencies..."
 if command -v uv &> /dev/null; then
-    uv pip install -e ".[ui,analysis]"
+    uv pip install -e ".[ui,analysis,ble]"
 else
-    pip install -e ".[ui,analysis]"
+    pip install -e ".[ui,analysis,ble]"
 fi
 # Camera dependencies are disabled for the radar-only production path.
 # If camera support returns, re-enable the optional camera extra in
@@ -239,11 +240,11 @@ if [ "$PLATFORM" == "pi" ] && [ "$DEPS_ONLY" == "false" ] && [ "$INTERACTIVE" ==
             if python scripts/hardware-test/test_rolling_buffer_persist.py --test; then
                 log "OPS243-A configured ✓"
             else
-                warn "Verification failed. See docs/raspberry-pi-setup.md → Radar Setup."
+                warn "Verification failed. See docs/setup/raspberry-pi.md → Troubleshooting."
             fi
         else
             warn "Radar configuration failed — is the OPS243-A plugged in?"
-            warn "You can re-run this script, or see docs/raspberry-pi-setup.md."
+            warn "You can re-run this script, or see docs/setup/raspberry-pi.md."
         fi
     else
         info "Skipped. Run later with:"
@@ -268,6 +269,16 @@ if [ "$PLATFORM" == "pi" ] && [ "$DEPS_ONLY" == "false" ] && [ "$INTERACTIVE" ==
         info "Skipped. Run later with: ./scripts/battery/geekworm/setup.sh"
     fi
 
+    # --- Bluetooth (BLE phone app) ---
+    echo ""
+    if "$SCRIPT_DIR/configure_bluetooth.sh" --check > /dev/null 2>&1; then
+        log "Bluetooth already configured for the phone app ✓"
+    elif confirm "Configure Bluetooth for the iPhone app? (stops repeated pairing prompts; restarts bluetooth)" "Y"; then
+        "$SCRIPT_DIR/configure_bluetooth.sh" || warn "Bluetooth configuration failed. See docs/ios-ble.md → Troubleshooting."
+    else
+        info "Skipped. Run later with: ./scripts/setup/configure_bluetooth.sh"
+    fi
+
     # --- Auto-start service ---
     echo ""
     if confirm "Start OpenFlight automatically on boot?" "N"; then
@@ -280,7 +291,7 @@ if [ "$PLATFORM" == "pi" ] && [ "$DEPS_ONLY" == "false" ] && [ "$INTERACTIVE" ==
         log "Service installed and enabled ✓ (starts on next boot)"
         info "Manage it with: sudo systemctl {start|stop|status} openflight"
     else
-        info "Skipped. See docs/raspberry-pi-setup.md → Auto-Start on Boot."
+        info "Skipped. See docs/setup/raspberry-pi.md → Auto-Start on Boot."
     fi
 
     # --- Desktop shortcut ---
@@ -327,7 +338,7 @@ if [ "$PLATFORM" == "pi" ] && [ "$DEPS_ONLY" == "false" ] && [ "$INTERACTIVE" ==
         info "Check sync state any time with: openflight-cloud status"
     else
         info "Skipped. Enable later by re-running this script, or see"
-        info "    docs/cloud-sync.md"
+        info "    docs/using/cloud-sync.md"
     fi
 elif [ "$PLATFORM" == "pi" ]; then
     info "Skipping hardware setup ($([ "$INTERACTIVE" == "false" ] && echo "non-interactive" || echo "--deps-only"))."
@@ -356,6 +367,6 @@ echo "    openflight-cloud link                   # pair this Pi with FlightWeb"
 echo "    openflight-cloud status                 # linked? queued? parked?"
 echo "    openflight-cloud push --dry-run         # see exactly what would upload"
 echo ""
-log "For details and troubleshooting, see docs/raspberry-pi-setup.md"
-log "For cloud sync details, see docs/cloud-sync.md"
+log "For details and troubleshooting, see docs/setup/raspberry-pi.md"
+log "For cloud sync details, see docs/using/cloud-sync.md"
 echo ""

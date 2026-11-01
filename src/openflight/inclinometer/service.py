@@ -101,7 +101,7 @@ class InclinometerService:
                 with self._lock:
                     self._last_error = str(error)
                     self._last_error_timestamp = time.time()
-                logger.warning("LIS3DH sample failed: %s", error)
+                logger.warning("Inclinometer sample failed: %s", error)
             delay = max(0.0, interval_s - (time.monotonic() - started))
             self._stop_event.wait(delay)
 
