@@ -104,6 +104,15 @@ describe('StatsPanel', () => {
     expect(html).toContain('metric-card__value">96.0<'); // max
   });
 
+  it('averages the carry Live shows, committed carry first', () => {
+    const html = render([
+      makeShot({ estimated_carry_yards: 119, carry_spin_adjusted: 143, timestamp: 'a' }),
+      makeShot({ estimated_carry_yards: 151, carry_spin_adjusted: null, timestamp: 'b' }),
+    ]);
+
+    expect(html).toContain('metric-card__value">147<');
+  });
+
   it('keeps the tile count stable when club speed is missing', () => {
     // Six tiles either way, so the 3x2 grid never reflows.
     const html = render([makeShot({ club_speed_mph: null, smash_factor: null })]);

@@ -101,6 +101,13 @@ describe('ShotsPanel', () => {
     expect(html).toContain('shots-panel__value--accent');
   });
 
+  it('shows the carry Live shows, committed carry first', () => {
+    const html = render([makeShot({ estimated_carry_yards: 119, carry_spin_adjusted: 143 })]);
+
+    expect(html).toContain('shots-panel__value--accent">143<');
+    expect(html).not.toContain('>119<');
+  });
+
   it('renders placeholders rather than blanks for missing values', () => {
     const html = render([makeShot({ club_speed_mph: null, launch_angle_vertical: null, spin_rpm: null })]);
 

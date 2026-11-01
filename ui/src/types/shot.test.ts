@@ -1,11 +1,34 @@
 import { describe, expect, it } from 'vitest';
 import type { Shot } from './shot';
-import { countShotsByProfile, filterShotsByProfile, excludeShotsByProfile, getDisplayCarryYards } from './shot';
+import {
+  computeStats,
+  countShotsByProfile,
+  filterShotsByProfile,
+  excludeShotsByProfile,
+  getDisplayCarryYards,
+} from './shot';
 
 describe('getDisplayCarryYards', () => {
   it('prefers the committed carry and falls back to the speed estimate', () => {
     expect(getDisplayCarryYards({ carry_spin_adjusted: 143, estimated_carry_yards: 151 } as Shot)).toBe(143);
     expect(getDisplayCarryYards({ carry_spin_adjusted: null, estimated_carry_yards: 151 } as Shot)).toBe(151);
+  });
+});
+
+describe('computeStats', () => {
+  const carryShot = (committed: number | null, estimate: number): Shot =>
+    ({
+      ball_speed_mph: 100,
+      club_speed_mph: null,
+      smash_factor: null,
+      carry_spin_adjusted: committed,
+      estimated_carry_yards: estimate,
+    }) as Shot;
+
+  it('averages the carry Live shows, committed carry first', () => {
+    const stats = computeStats([carryShot(143, 119), carryShot(null, 151)]);
+
+    expect(stats.avg_carry_est).toBe(147);
   });
 });
 

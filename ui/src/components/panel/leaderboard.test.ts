@@ -119,6 +119,16 @@ describe('buildLeaderboard', () => {
     expect(rows.every((row) => row.shotCount === 0)).toBe(true);
   });
 
+  it('uses the carry Live shows, so committed carry beats the speed estimate', () => {
+    const rows = buildLeaderboard(
+      roster,
+      [shot('jor', 104, 119, { carry_spin_adjusted: 143 }), shot('jor', 100, 130, { carry_spin_adjusted: 137 })],
+      'imperial'
+    );
+
+    expect(texts(rows[0]).slice(2)).toEqual(['140', '143']);
+  });
+
   it('formats in the display unit', () => {
     const [jordan] = buildLeaderboard(roster, [shot('jor', 100, 100)], 'metric');
 
