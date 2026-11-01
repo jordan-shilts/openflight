@@ -88,3 +88,50 @@ for (const viewport of KIOSK_VIEWPORTS) {
     });
   });
 }
+
+test.describe('live metrics on a phone held upright (390×844)', () => {
+  test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
+
+  test('puts the pinned metric and carry on top, the rest in two columns, all inside their tiles', async ({ page }) => {
+    await withControlSocket(async (socket) => {
+      await simulateShot(socket);
+    });
+
+    await gotoApp(page);
+    await dismissPicker(page);
+
+    const grid = page.locator('.live-panel__grid');
+    await expect(grid.locator('.metric-card')).toHaveCount(10);
+    expect(await grid.evaluate((node) => getComputedStyle(node).gridTemplateColumns.trim().split(/\s+/).length)).toBe(
+      2
+    );
+
+    const tops = await grid.locator('.metric-card').evaluateAll((cards) =>
+      cards.map((card) => ({
+        label: card.querySelector('.metric-card__label')?.textContent?.trim() ?? '',
+        top: Math.round(card.getBoundingClientRect().top),
+      }))
+    );
+    const firstRowTop = Math.min(...tops.map((tile) => tile.top));
+    expect(tops.filter((tile) => tile.top === firstRowTop).map((tile) => tile.label)).toEqual([
+      'Ball speed',
+      expect.stringContaining('Carry'),
+    ]);
+
+    const sizes = await liveMetricValueFontSizes(page);
+    expect(sizes[0]).toBeGreaterThan(sizes[2]);
+    expect(await overflowingLiveMetricValues(page)).toEqual([]);
+
+    await page.locator('.live-panel__grid .metric-card__value').evaluateAll((values, widest) => {
+      for (const value of values) {
+        value.textContent = widest;
+      }
+    }, WIDEST_LIVE_METRIC_VALUE);
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    expect(await overflowingLiveMetricValues(page)).toEqual([]);
+
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+    await expect(page.getByRole('button', { name: 'Change club' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Stats', exact: true })).toBeVisible();
+  });
+});
