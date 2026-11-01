@@ -24,6 +24,8 @@ export const en = {
   'live.dismiss': 'Dismiss',
   'live.dismissAlert': 'Dismiss TI radar alert',
   'live.switchProfile': 'Switch profile',
+  'live.showFlight': 'Flight',
+  'live.showData': 'Data',
 
   'replay.open': 'Replay',
   'replay.title': 'Shot replay',
@@ -70,6 +72,13 @@ export const en = {
   'shape.fade': 'Fade',
   'shape.draw': 'Draw',
   'shape.straight': 'Straight',
+
+  'flight.apex': 'Apex',
+  'flight.landingAngle': 'Land. angle',
+  'flight.hangTime': 'Hang time',
+  'flight.unavailable': 'No flight for this shot',
+  'flight.unavailableDetail': 'The flight needs a launch angle and the ballistics model',
+  'flight.chartLabel': 'Side view of the flight: carry {carry} {distanceUnit}, apex {apex} {heightUnit}',
 
   'stats.filterByClub': 'Filter by club',
   'stats.all': 'All ({count})',

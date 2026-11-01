@@ -5,8 +5,10 @@ import { useUnitPreference } from '../../state/useUnitPreference';
 import { useI18n } from '../../i18n/useI18n';
 import { useSharedFitFontSize } from '../../hooks/useFitFontSize';
 import { MetricCard } from '../ui/MetricCard';
+import { FlightView } from './FlightView';
 import { PanelHeader } from './PanelHeader';
 import { buildLiveMetrics, leadMetricIds, pinSelectedMetric } from './liveMetrics';
+import type { LiveView } from './liveView';
 
 interface LivePanelProps {
   shot: Shot | null;
@@ -24,6 +26,7 @@ interface LivePanelProps {
   /** Pinned header control, e.g. Change club. */
   headerAction?: ReactNode;
   playerStrip?: ReactNode;
+  view?: LiveView;
 }
 
 /**
@@ -42,11 +45,13 @@ export function LivePanel({
   isNewShot = false,
   headerAction,
   playerStrip,
+  view = 'metrics',
 }: LivePanelProps) {
   const { locale, t } = useI18n();
   const { unitSystem } = useUnitPreference();
   const profileShots = useMemo(() => filterShotsByProfile(shots, profileId), [shots, profileId]);
   const displayedShot = profileShots[profileShots.length - 1] ?? null;
+  const earlierShots = useMemo(() => profileShots.slice(0, -1), [profileShots]);
   const isProfileNewShot = Boolean(isNewShot && shot && displayedShot && shot.timestamp === displayedShot.timestamp);
 
   const swingStats = useMemo(
@@ -64,7 +69,7 @@ export function LivePanel({
   const selected = metrics[0] ?? null;
   const leadIds = leadMetricIds(metrics);
   const gridRef = useSharedFitFontSize(
-    metrics.length > 0,
+    metrics.length > 0 && view === 'metrics',
     metrics.map((metric) => `${metric.value}:${metric.unit ?? ''}`).join('|')
   );
   const header = (
@@ -84,6 +89,23 @@ export function LivePanel({
         <div className="panel__body panel__body--empty live-panel__empty">
           <span className="panel__empty-title live-panel__empty-title">{t('live.ready')}</span>
           <span className="panel__empty-detail live-panel__empty-detail">{t('live.readyDetail')}</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === 'flight' && displayedShot) {
+    return (
+      <div className="panel">
+        {header}
+        <div className="panel__body live-panel__body live-panel__body--flight">
+          <FlightView
+            key={displayedShot.timestamp}
+            shot={displayedShot}
+            earlierShots={earlierShots}
+            animate={isProfileNewShot}
+            unitSystem={unitSystem}
+          />
         </div>
       </div>
     );

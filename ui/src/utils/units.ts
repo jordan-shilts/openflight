@@ -2,10 +2,13 @@ export type UnitSystem = 'imperial' | 'metric';
 
 const MPH_TO_KMH = 1.60934;
 const YARDS_TO_METERS = 0.9144;
+const FEET_TO_METERS = 0.3048;
 const IMPERIAL_SPEED_UNIT = 'mph';
 const METRIC_SPEED_UNIT = 'km/h';
 const IMPERIAL_DISTANCE_UNIT = 'yds';
 const METRIC_DISTANCE_UNIT = 'm';
+const IMPERIAL_HEIGHT_UNIT = 'ft';
+const METRIC_HEIGHT_UNIT = 'm';
 
 export function convertSpeedFromMph(speedMph: number, unitSystem: UnitSystem): number {
   if (unitSystem === 'metric') {
@@ -23,6 +26,14 @@ export function convertDistanceFromYards(distanceYards: number, unitSystem: Unit
   return distanceYards;
 }
 
+export function convertHeightFromFeet(heightFeet: number, unitSystem: UnitSystem): number {
+  if (unitSystem === 'metric') {
+    return heightFeet * FEET_TO_METERS;
+  }
+
+  return heightFeet;
+}
+
 export function formatSpeed(speedMph: number, unitSystem: UnitSystem, digits = 1): string {
   return convertSpeedFromMph(speedMph, unitSystem).toFixed(digits);
 }
@@ -37,6 +48,10 @@ export function getSpeedUnit(unitSystem: UnitSystem): string {
 
 export function getDistanceUnit(unitSystem: UnitSystem): string {
   return unitSystem === 'metric' ? METRIC_DISTANCE_UNIT : IMPERIAL_DISTANCE_UNIT;
+}
+
+export function getHeightUnit(unitSystem: UnitSystem): string {
+  return unitSystem === 'metric' ? METRIC_HEIGHT_UNIT : IMPERIAL_HEIGHT_UNIT;
 }
 
 export function getUnitsLabel(unitSystem: UnitSystem): string {

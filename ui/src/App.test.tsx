@@ -38,6 +38,13 @@ describe('App shell', () => {
     expect(html).toContain('panel-header__title">Live<');
   });
 
+  it('opens the Flight view from the Live header, leaving the footer tabs as they were', () => {
+    const html = renderToString(<App />);
+
+    expect(html).toMatch(/panel-header__actions">[^]*?aria-label="Flight"[^]*?Change club/);
+    expect(html.match(/class="nav__button[ "]/g)).toHaveLength(PANEL_VIEWS.length);
+  });
+
   it('opens on the club picker so the club is confirmed before the first shot', () => {
     const html = renderToString(<App />);
 

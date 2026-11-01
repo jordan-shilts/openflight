@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import {
   convertDistanceFromYards,
+  convertHeightFromFeet,
   convertSpeedFromMph,
   formatCarryRange,
   formatDistance,
   formatSpeed,
   getDistanceUnit,
+  getHeightUnit,
   getSpeedUnit,
   getUnitsLabel,
 } from './units';
@@ -33,6 +35,13 @@ describe('units helpers', () => {
     expect(convertDistanceFromYards(100, 'metric')).toBeCloseTo(91.44, 2);
     expect(formatDistance(100, 'metric', 0)).toBe('91');
     expect(getDistanceUnit('metric')).toBe('m');
+  });
+
+  it('keeps flight heights in feet for imperial and converts them to meters for metric', () => {
+    expect(convertHeightFromFeet(90, 'imperial')).toBe(90);
+    expect(getHeightUnit('imperial')).toBe('ft');
+    expect(convertHeightFromFeet(100, 'metric')).toBeCloseTo(30.48, 2);
+    expect(getHeightUnit('metric')).toBe('m');
   });
 
   it('joins speed and distance units for chrome labels', () => {

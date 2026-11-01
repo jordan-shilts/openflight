@@ -26,6 +26,8 @@ export const es: Messages = {
   'live.dismiss': 'Cerrar',
   'live.dismissAlert': 'Cerrar alerta del radar TI',
   'live.switchProfile': 'Cambiar de perfil',
+  'live.showFlight': 'Vuelo',
+  'live.showData': 'Datos',
 
   'replay.open': 'Repetición',
   'replay.title': 'Repetición del golpe',
@@ -72,6 +74,13 @@ export const es: Messages = {
   'shape.fade': 'Fade',
   'shape.draw': 'Draw',
   'shape.straight': 'Recto',
+
+  'flight.apex': 'Altura máx.',
+  'flight.landingAngle': 'Áng. caída',
+  'flight.hangTime': 'Tiempo vuelo',
+  'flight.unavailable': 'Sin vuelo para este golpe',
+  'flight.unavailableDetail': 'El vuelo necesita un ángulo de salida y el modelo balístico',
+  'flight.chartLabel': 'Vista lateral del vuelo: carry {carry} {distanceUnit}, altura máx. {apex} {heightUnit}',
 
   'stats.filterByClub': 'Filtrar por palo',
   'stats.all': 'Todos ({count})',

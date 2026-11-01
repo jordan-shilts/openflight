@@ -18,6 +18,7 @@ import { CameraReplayDialog } from './components/CameraReplayDialog';
 import {
   CameraPanel,
   LivePanel,
+  LiveViewToggle,
   ProfileNameDialog,
   ProfilesPanel,
   ClearSessionDialog,
@@ -31,6 +32,7 @@ import {
   ShotsPanel,
   StatsPanel,
   type StatsView,
+  type LiveView,
   clubSections,
   trainingImplementSections,
   type PanelView,
@@ -118,6 +120,7 @@ function AppContent() {
   const [profileDialogName, setProfileDialogName] = useState('');
   const [clearSessionOpen, setClearSessionOpen] = useState(false);
   const [statsView, setStatsView] = useState<StatsView>('me');
+  const [liveView, setLiveView] = useState<LiveView>('metrics');
   const { activeReplay, openReplay, closeReplay, reportPlaybackError } = useCameraReplayController();
 
   // Reflect a server-pushed club change (e.g. the club changed in the connected
@@ -253,9 +256,11 @@ function AppContent() {
     </PanelAction>
   );
   const latestReplay = profileLatestShot?.camera_replay;
+  const shownLiveView: LiveView = isSwingSpeedMode ? 'metrics' : liveView;
 
   const liveHeaderActions = (
     <>
+      {isSwingSpeedMode ? null : <LiveViewToggle view={liveView} onChange={setLiveView} />}
       {latestReplay ? (
         <PanelAction variant="secondary" onClick={() => openReplay(latestReplay)}>
           {t('replay.open')}
@@ -330,6 +335,7 @@ function AppContent() {
                 onSelectMetric={setHeroMetricId}
                 isNewShot={profileIsNewShot}
                 headerAction={liveHeaderActions}
+                view={shownLiveView}
                 playerStrip={
                   <PlayerStrip
                     profiles={profiles}

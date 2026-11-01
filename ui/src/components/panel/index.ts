@@ -5,6 +5,8 @@ export { MenuSheet } from './MenuSheet';
 export { PickerOverlay } from './PickerOverlay';
 export { clubSections, trainingImplementSections, type PickerOption, type PickerSection } from './pickerSections';
 export { LivePanel } from './LivePanel';
+export type { LiveView } from './liveView';
+export { LiveViewToggle } from './LiveViewToggle';
 export { PlayerStrip } from './PlayerStrip';
 export { ProfilesPanel } from './ProfilesPanel';
 export { ProfileNameDialog } from './ProfileNameDialog';
