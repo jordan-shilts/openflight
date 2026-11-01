@@ -1,6 +1,6 @@
 """Tests for gspro.state — GSPro club-code mapping."""
 from openflight.clubs import ClubType
-from openflight.gspro.state import gspro_code_to_club
+from openflight.gspro.state import _GSPRO_CLUB_MAP, gspro_code_to_club
 
 
 def test_gspro_code_to_club_mapping():
@@ -16,8 +16,14 @@ def test_unknown_code_maps_to_unknown():
     assert gspro_code_to_club("XX") is ClubType.UNKNOWN
 
 
-def test_putter_out_of_scope_maps_to_unknown():
-    assert gspro_code_to_club("PT") is ClubType.UNKNOWN
+def test_putter_code_maps_to_putter():
+    assert gspro_code_to_club("PT") is ClubType.PUTTER
+
+
+def test_every_selectable_club_has_one_gspro_code():
+    clubs = list(_GSPRO_CLUB_MAP.values())
+    assert len(clubs) == len(set(clubs))
+    assert set(clubs) == set(ClubType) - {ClubType.UNKNOWN}
 
 
 def test_all_openconnect_codes_from_ogs_clubsync_map_to_real_clubs():
@@ -30,7 +36,7 @@ def test_all_openconnect_codes_from_ogs_clubsync_map_to_real_clubs():
     codes = [
         "DR", "W3", "W5", "W7", "H3", "H5", "H7", "H9",
         "I2", "I3", "I4", "I5", "I6", "I7", "I8", "I9",
-        "PW", "GW", "SW", "LW",
+        "PW", "GW", "SW", "LW", "PT",
     ]
     for code in codes:
         assert gspro_code_to_club(code) is not ClubType.UNKNOWN, code

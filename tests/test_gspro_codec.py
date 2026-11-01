@@ -80,6 +80,13 @@ def test_parse_player_update_code_201():
     assert evt.club is ClubType.IRON_7
 
 
+def test_parse_player_update_putter():
+    raw = json.dumps({"Code": 201, "Player": {"Handed": "RH", "Club": "PT"}}).encode()
+    (evt,) = GSProCodec().parse_inbound(raw)
+    assert isinstance(evt, PlayerUpdate)
+    assert evt.club is ClubType.PUTTER
+
+
 def test_parse_shot_ack_code_200():
     events = GSProCodec().parse_inbound(json.dumps({"Code": 200, "Message": "OK"}).encode())
     assert isinstance(events[0], ShotAck)

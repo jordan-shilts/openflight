@@ -64,6 +64,17 @@ def test_missing_spin_uses_model():
     assert r.provenance["total_spin"] == "estimated"
 
 
+def test_spin_model_covers_every_club():
+    assert set(SPIN_MODEL_RPM) == set(ClubType)
+
+
+def test_putter_without_reliable_spin_sends_putt_spin():
+    shot = _shot(club=ClubType.PUTTER, ball_speed_mph=6.0, launch_angle_vertical=1.4,
+                 spin_rpm=90.0, spin_confidence=0.3)
+    r = resolve_shot(shot, PlayerState())
+    assert r.total_spin_rpm == SPIN_MODEL_RPM[ClubType.PUTTER] < 200
+
+
 def test_missing_spin_axis_falls_back_to_zero():
     shot = _shot(spin_rpm=2500.0, spin_confidence=0.9)  # no spin_axis_deg
     r = resolve_shot(shot, PlayerState())

@@ -39,6 +39,7 @@ SPIN_MODEL_RPM: Dict[ClubType, float] = {
     ClubType.GW: 10000.0,
     ClubType.SW: 10500.0,
     ClubType.LW: 11000.0,
+    ClubType.PUTTER: 80.0,
     ClubType.UNKNOWN: 5000.0,
 }
 

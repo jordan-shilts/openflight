@@ -109,6 +109,24 @@ def test_inbound_player_update_sets_state_and_monitor(server, monkeypatch):
     assert players and players[0][1]["club"] == ClubType.IRON_7.value
 
 
+def test_inbound_putter_from_the_green_switches_the_active_club(server, monkeypatch):
+    from openflight.gspro.codec import GSProCodec
+
+    set_clubs = []
+    fake_monitor = type("M", (), {"set_club": lambda self, c: set_clubs.append(c)})()
+    monkeypatch.setattr(server, "monitor", fake_monitor)
+    monkeypatch.setattr(server, "active_club", ClubType.DRIVER)
+    frame = b'{"Code":201,"Message":"GSPro Player Information","Player":{"Handed":"RH","Club":"PT"}}'
+
+    for event in GSProCodec().parse_inbound(frame):
+        server._sim_on_inbound("gspro", event)
+
+    assert set_clubs == [ClubType.PUTTER]
+    assert server.active_club is ClubType.PUTTER
+    changes = [a_[1] for a_, k in server._emitted if a_[0] == "club_changed"]
+    assert changes == [{"club": "putter"}]
+
+
 def test_inbound_error_emits_status(server):
     server._sim_on_inbound("opengolfsim", SimError(message="boom"))
     errs = [a_ for a_, k in server._emitted
