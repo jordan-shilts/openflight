@@ -89,6 +89,9 @@ packages = ["src/openflight"]
 
 [dependency-groups]
 dev = [
+    # The camera estimator tests run OpenCV, so the default `uv sync` must
+    # install it even when the camera extra is not selected.
+    "opencv-python-headless>=4.8.0",
     "pylint>=3.3.9",
     "pre-commit>=4.0.0",
     "pytest>=9.0.3",
