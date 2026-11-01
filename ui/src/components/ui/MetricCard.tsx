@@ -23,6 +23,7 @@ export interface MetricCardProps {
   onClick?: () => void;
   /** Marks an interactive card as the currently promoted one (`aria-pressed`). */
   selected?: boolean;
+  className?: string;
 }
 
 export function EstimatedMark() {
@@ -50,6 +51,7 @@ export function MetricCard({
   onClick,
   selected,
   estimated,
+  className,
 }: MetricCardProps) {
   const classes = ['metric-card', `metric-card--${variant}`, `metric-card--label-${labelPosition}`];
   if (size === 'hero') {
@@ -60,6 +62,9 @@ export function MetricCard({
   }
   if (selected) {
     classes.push('metric-card--selected');
+  }
+  if (className) {
+    classes.push(className);
   }
 
   const label_ = (

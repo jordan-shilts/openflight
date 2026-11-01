@@ -25,6 +25,7 @@ export const pt: Messages = {
   'live.tiRadarDetail': 'Esta tacada usou um ângulo de saída estimado. {reason}',
   'live.dismiss': 'Fechar',
   'live.dismissAlert': 'Fechar alerta do radar TI',
+  'live.switchProfile': 'Trocar de perfil',
 
   'replay.open': 'Replay',
   'replay.title': 'Replay da tacada',
@@ -83,6 +84,9 @@ export const pt: Messages = {
   'stats.avgClub': 'Média taco',
   'stats.avgSmash': 'Média smash',
   'stats.last': 'Último',
+  'stats.longestCarry': 'Mais longo',
+  'stats.leaderboard': 'Classificação',
+  'stats.justMe': 'Só eu',
 
   'shots.noShots': 'Ainda sem tacadas',
   'shots.noShotsDetail': 'As tacadas gravadas aparecem aqui',

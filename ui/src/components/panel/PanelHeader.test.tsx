@@ -27,6 +27,15 @@ describe('PanelHeader', () => {
     expect(html.match(/panel-header__divider/g)).toHaveLength(2);
   });
 
+  it('renders toolbar controls between the identity and the actions', () => {
+    const html = renderToString(
+      <PanelHeader title="Live" toolbar={<div className="toolbar">strip</div>} actions={<button>Change</button>} />
+    );
+
+    expect(html.indexOf('class="toolbar"')).toBeGreaterThan(html.indexOf('panel-header__identity'));
+    expect(html.indexOf('class="toolbar"')).toBeLessThan(html.indexOf('panel-header__actions'));
+  });
+
   it('keeps the status menu closed until the LED and title are opened', () => {
     const html = renderToString(<PanelHeader title="Live" connected />);
 

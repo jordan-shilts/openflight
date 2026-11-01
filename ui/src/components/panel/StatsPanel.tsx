@@ -1,4 +1,5 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
+import type { Profile } from '../../types/profile';
 import type { Shot } from '../../types/shot';
 import {
   computeStats,
@@ -9,19 +10,33 @@ import {
 } from '../../types/shot';
 import { useDragScroll } from '../../hooks/useDragScroll';
 import { useUnitPreference } from '../../state/useUnitPreference';
-import { useI18n } from '../../i18n/useI18n';
+import { useI18n, type MessageKey } from '../../i18n/useI18n';
 import { formatDistance, formatSpeed, getDistanceUnit, getSpeedUnit } from '../../utils/units';
 import { MetricCard } from '../ui/MetricCard';
+import { buildLeaderboard, LEADERBOARD_COLUMNS, leaderboardShots, type LeaderboardColumn } from './leaderboard';
+import { PanelAction } from './PanelAction';
 import { PanelHeader } from './PanelHeader';
+
+export type StatsView = 'me' | 'leaderboard';
 
 interface StatsPanelProps {
   shots: Shot[];
   activeClub: string;
   profileId: string;
   profileName: string;
+  profiles: Profile[];
+  view: StatsView;
+  onChangeView: (view: StatsView) => void;
   /** Pinned header control, e.g. Clear session. */
   headerAction?: ReactNode;
 }
+
+const LEADERBOARD_LABEL_KEYS: Record<LeaderboardColumn, MessageKey> = {
+  avg_ball: 'stats.avgBall',
+  max_ball: 'stats.maxBall',
+  avg_carry: 'stats.avgCarry',
+  max_carry: 'stats.longestCarry',
+};
 
 interface StatTile {
   id: string;
@@ -35,15 +50,31 @@ interface StatTile {
  * filter chips above the tiles. Six tiles for a ball-strike session (3x2 as
  * drawn), four for a swing-speed one.
  */
-export function StatsPanel({ shots, activeClub, profileId, profileName, headerAction }: StatsPanelProps) {
+export function StatsPanel({
+  shots,
+  activeClub,
+  profileId,
+  profileName,
+  profiles,
+  view,
+  onChangeView,
+  headerAction,
+}: StatsPanelProps) {
   const { t } = useI18n();
+  const canCompare = profiles.length > 1;
+  const showLeaderboard = canCompare && view === 'leaderboard';
   const profileShots = useMemo(() => filterShotsByProfile(shots, profileId), [shots, profileId]);
-  const hasShotsForActiveClub = profileShots.some((shot) => shot.club === activeClub);
+  const comparableShots = useMemo(() => leaderboardShots(shots), [shots]);
+  const scopeShots = showLeaderboard ? comparableShots : profileShots;
+  const hasShotsForActiveClub = scopeShots.some((shot) => shot.club === activeClub);
   const [selectedClub, setSelectedClub] = useState<string | null>(hasShotsForActiveClub ? activeClub : null);
   const [prevActiveClub, setPrevActiveClub] = useState(activeClub);
   const [prevProfileId, setPrevProfileId] = useState(profileId);
+  const [prevShowLeaderboard, setPrevShowLeaderboard] = useState(showLeaderboard);
   const chipRef = useRef<HTMLDivElement>(null);
   const chipScroll = useDragScroll(chipRef, 'x');
+  const tableRef = useRef<HTMLDivElement>(null);
+  const tableScroll = useDragScroll(tableRef);
 
   // Update state during render when the prop changes, rather than in an effect.
   if (activeClub !== prevActiveClub || profileId !== prevProfileId) {
@@ -51,23 +82,33 @@ export function StatsPanel({ shots, activeClub, profileId, profileName, headerAc
     setPrevProfileId(profileId);
     setSelectedClub(hasShotsForActiveClub ? activeClub : null);
   }
+  if (showLeaderboard !== prevShowLeaderboard) {
+    setPrevShowLeaderboard(showLeaderboard);
+    if (selectedClub !== null && !scopeShots.some((shot) => shot.club === selectedClub)) {
+      setSelectedClub(null);
+    }
+  }
 
   const { unitSystem } = useUnitPreference();
   const speedUnit = getSpeedUnit(unitSystem);
   const distanceUnit = getDistanceUnit(unitSystem);
 
-  const availableClubs = useMemo(() => getUniqueClubs(profileShots), [profileShots]);
+  const availableClubs = useMemo(() => getUniqueClubs(scopeShots), [scopeShots]);
   const clubCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const shot of profileShots) {
+    for (const shot of scopeShots) {
       counts[shot.club] = (counts[shot.club] ?? 0) + 1;
     }
     return counts;
-  }, [profileShots]);
+  }, [scopeShots]);
 
   const filteredShots = useMemo(
-    () => (selectedClub === null ? profileShots : profileShots.filter((shot) => shot.club === selectedClub)),
-    [profileShots, selectedClub]
+    () => (selectedClub === null ? scopeShots : scopeShots.filter((shot) => shot.club === selectedClub)),
+    [scopeShots, selectedClub]
+  );
+  const leaderboard = useMemo(
+    () => (showLeaderboard ? buildLeaderboard(profiles, filteredShots, unitSystem) : []),
+    [showLeaderboard, profiles, filteredShots, unitSystem]
   );
 
   const stats = useMemo(() => computeStats(filteredShots), [filteredShots]);
@@ -141,7 +182,7 @@ export function StatsPanel({ shots, activeClub, profileId, profileName, headerAc
         aria-pressed={selectedClub === null}
         onClick={() => setSelectedClub(null)}
       >
-        {t('stats.all', { count: profileShots.length })}
+        {t('stats.all', { count: scopeShots.length })}
       </button>
       <div
         className="panel-chips stats-panel__chip-scroll"
@@ -167,16 +208,91 @@ export function StatsPanel({ shots, activeClub, profileId, profileName, headerAc
     </div>
   );
 
+  const viewToggle = canCompare ? (
+    <PanelAction variant="secondary" onClick={() => onChangeView(showLeaderboard ? 'me' : 'leaderboard')}>
+      {showLeaderboard ? t('stats.justMe') : t('stats.leaderboard')}
+    </PanelAction>
+  ) : null;
+
+  const leaderboardTable = (
+    <div
+      className="stats-leaderboard"
+      ref={tableRef}
+      onPointerDown={tableScroll.onPointerDown}
+      onPointerMove={tableScroll.onPointerMove}
+      onPointerUp={tableScroll.onPointerUp}
+      onPointerCancel={tableScroll.onPointerCancel}
+      onClickCapture={tableScroll.onClickCapture}
+    >
+      <table className="stats-leaderboard__table">
+        <thead>
+          <tr>
+            <th scope="col">{t('shots.colProfile')}</th>
+            <th scope="col" className="stats-leaderboard__num">
+              {t('stats.shots')}
+            </th>
+            {LEADERBOARD_COLUMNS.map((column) => (
+              <th key={column} scope="col" className="stats-leaderboard__num">
+                {t(LEADERBOARD_LABEL_KEYS[column])}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {leaderboard.map((row) => {
+            const classes = ['stats-leaderboard__row'];
+            if (row.profileId === profileId) classes.push('stats-leaderboard__row--active');
+            if (row.shotCount === 0) classes.push('stats-leaderboard__row--empty');
+
+            return (
+              <tr
+                key={row.profileId}
+                className={classes.join(' ')}
+                aria-current={row.profileId === profileId ? 'true' : undefined}
+              >
+                <th scope="row" className="stats-leaderboard__name">
+                  {row.name}
+                </th>
+                <td className="stats-leaderboard__num">{row.shotCount}</td>
+                {LEADERBOARD_COLUMNS.map((column) => (
+                  <td
+                    key={column}
+                    className={`stats-leaderboard__num${row.cells[column].best ? ' stats-leaderboard__best' : ''}`}
+                  >
+                    {row.cells[column].text}
+                  </td>
+                ))}
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+
   return (
     <div className="panel">
-      <PanelHeader title={t('nav.stats')} subtitle={profileName} actions={headerAction} />
+      <PanelHeader
+        title={t('nav.stats')}
+        subtitle={showLeaderboard ? t('stats.leaderboard') : profileName}
+        actions={
+          viewToggle || headerAction ? (
+            <>
+              {viewToggle}
+              {headerAction}
+            </>
+          ) : undefined
+        }
+      />
       <div className="panel__body stats-panel">
-        {profileShots.length > 0 ? clubFilters : null}
-        {profileShots.length === 0 ? (
+        {scopeShots.length > 0 ? clubFilters : null}
+        {scopeShots.length === 0 ? (
           <div className="panel__body--empty">
             <span className="panel__empty-title">{t('stats.noShots')}</span>
             <span className="panel__empty-detail">{t('stats.noShotsDetail')}</span>
           </div>
+        ) : showLeaderboard ? (
+          leaderboardTable
         ) : (
           <div className={`stats-panel__grid stats-panel__grid--of-${tiles.length}`}>
             {tiles.map((tile) => (

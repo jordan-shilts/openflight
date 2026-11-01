@@ -23,6 +23,7 @@ export const en = {
   'live.tiRadarDetail': 'This shot used an estimated launch angle. {reason}',
   'live.dismiss': 'Dismiss',
   'live.dismissAlert': 'Dismiss TI radar alert',
+  'live.switchProfile': 'Switch profile',
 
   'replay.open': 'Replay',
   'replay.title': 'Shot replay',
@@ -81,6 +82,9 @@ export const en = {
   'stats.avgClub': 'Avg club',
   'stats.avgSmash': 'Avg smash',
   'stats.last': 'Last',
+  'stats.longestCarry': 'Longest',
+  'stats.leaderboard': 'Leaderboard',
+  'stats.justMe': 'Just me',
 
   'shots.noShots': 'No shots yet',
   'shots.noShotsDetail': 'Recorded shots appear here',

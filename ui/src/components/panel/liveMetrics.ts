@@ -274,3 +274,15 @@ export function pinSelectedMetric(metrics: LiveMetric[], selectedId: string | nu
 
   return [metrics[index], ...metrics.filter((_, i) => i !== index)];
 }
+
+// Phone lead tiles: the pinned metric plus carry, or plus the next metric when
+// carry is pinned or absent (swing speed). Takes pinSelectedMetric's order.
+export function leadMetricIds(metrics: LiveMetric[]): string[] {
+  if (metrics.length === 0) {
+    return [];
+  }
+
+  const [pinned, ...rest] = metrics;
+  const partner = rest.find((metric) => metric.id === 'carry') ?? rest[0];
+  return partner ? [pinned.id, partner.id] : [pinned.id];
+}

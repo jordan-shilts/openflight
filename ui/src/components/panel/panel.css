@@ -668,6 +668,74 @@
   font-size: 0.42em;
 }
 
+/* ---------------------------------------------------------- player strip -- */
+
+.panel-header:has(> .player-strip) {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+/* A second header row; on 800x400 it moves beside the title so the grid keeps its height. */
+.player-strip {
+  order: 1;
+  flex: 1 0 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+@media (max-height: 440px) {
+  .panel-header:has(> .player-strip) {
+    flex-wrap: nowrap;
+  }
+
+  .player-strip {
+    order: 0;
+    flex: 1 1 0;
+  }
+}
+
+/* Shrinks to its chips so + follows the last name until the row overflows. */
+.player-strip__scroll {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: none;
+  overscroll-behavior: contain;
+  touch-action: none;
+}
+
+.player-strip .panel-chip {
+  touch-action: none;
+}
+
+.player-strip__name {
+  max-width: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.player-strip__count {
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+
+.panel-chip--active .player-strip__count {
+  color: color-mix(in srgb, var(--color-accent-fg) 70%, transparent);
+}
+
+.player-strip__add {
+  justify-content: center;
+  padding: 0 14px;
+  border-style: dashed;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  letter-spacing: 0;
+}
+
 /* ----------------------------------------------------------- stats panel -- */
 
 .stats-panel {
@@ -734,6 +802,92 @@
   font-size: clamp(2.45rem, 11vh, 3.9rem);
   font-weight: 700;
   letter-spacing: -0.03em;
+}
+
+.stats-leaderboard {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-top: 1px solid var(--color-border);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.stats-leaderboard__table {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.stats-leaderboard__table th,
+.stats-leaderboard__table td {
+  padding: 0.45rem 0.75rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.stats-leaderboard__table thead th {
+  position: sticky;
+  top: 0;
+  padding-block: 0.4rem;
+  background: var(--color-surface);
+  font-weight: 600;
+  font-size: 0.5625rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.stats-leaderboard__table th:first-child {
+  padding-left: 26px;
+}
+
+.stats-leaderboard__table th:last-child,
+.stats-leaderboard__table td:last-child {
+  padding-right: 26px;
+}
+
+.stats-leaderboard__row {
+  border-top: 1px solid var(--color-border-soft);
+}
+
+.stats-leaderboard__name {
+  max-width: 12rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 700;
+  font-size: 0.875rem;
+  color: var(--color-text);
+}
+
+.stats-leaderboard__table .stats-leaderboard__num {
+  text-align: right;
+}
+
+.stats-leaderboard__row .stats-leaderboard__num {
+  font-weight: 700;
+  font-size: 1.125rem;
+  letter-spacing: -0.02em;
+  color: var(--color-text);
+}
+
+.stats-leaderboard__row .stats-leaderboard__best {
+  color: var(--color-accent);
+}
+
+.stats-leaderboard__row--active {
+  background: color-mix(in srgb, var(--color-accent) 7%, transparent);
+}
+
+.stats-leaderboard__row--active .stats-leaderboard__name {
+  box-shadow: inset 5px 0 0 var(--color-accent-block);
+}
+
+.stats-leaderboard__row--empty .stats-leaderboard__name,
+.stats-leaderboard__row--empty .stats-leaderboard__num {
+  color: var(--color-text-faint);
 }
 
 /* --------------------------------------------------------- profiles panel -- */
@@ -1564,6 +1718,15 @@
     padding-inline: 18px;
   }
 
+  .stats-leaderboard__table th:first-child {
+    padding-left: 18px;
+  }
+
+  .stats-leaderboard__table th:last-child,
+  .stats-leaderboard__table td:last-child {
+    padding-right: 18px;
+  }
+
   .shots-panel__columns,
   .shots-panel__row,
   .shots-panel__validation {
@@ -1641,5 +1804,106 @@
   .clear-session-modal__dialog {
     width: min(28rem, calc(100% - 32px));
     padding: 1.25rem 1rem 1rem;
+  }
+}
+
+/* ------------------------------------------- phone held upright (390x844) -- */
+/* Landscape kiosks never match, so their layout is untouched. */
+
+@media (max-width: 640px) and (orientation: portrait) {
+  .panel-header {
+    padding-inline: 16px;
+    gap: var(--space-sm);
+  }
+
+  .panel-header__actions {
+    gap: 6px;
+  }
+
+  .panel-header__actions .panel-action {
+    padding: 0 10px;
+  }
+
+  .stats-panel__chips {
+    padding-inline: 16px;
+  }
+
+  .stats-leaderboard__table th,
+  .stats-leaderboard__table td {
+    padding-inline: 0.3rem;
+  }
+
+  .stats-leaderboard__table th:first-child {
+    padding-left: 16px;
+  }
+
+  .stats-leaderboard__table th:last-child,
+  .stats-leaderboard__table td:last-child {
+    padding-right: 16px;
+  }
+
+  .stats-leaderboard__table thead th {
+    white-space: normal;
+  }
+
+  .stats-leaderboard__name {
+    max-width: 5.5rem;
+  }
+
+  .stats-leaderboard__row .stats-leaderboard__num {
+    font-size: 0.9375rem;
+  }
+
+  .panel-footer {
+    padding-inline: 10px;
+    gap: 10px;
+  }
+
+  .panel-footer__tabs {
+    max-width: 100%;
+    mask-image: linear-gradient(to right, black calc(100% - 1.5rem), transparent);
+  }
+
+  /* The tabs need the room; Live tiles carry their own units. */
+  .panel-footer__units {
+    display: none;
+  }
+
+  .live-panel__empty {
+    padding-inline: 16px;
+  }
+
+  .live-panel__empty-title {
+    font-size: clamp(2.5rem, 15vw, 7rem);
+  }
+
+  .live-panel__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: 1.4fr repeat(4, 1fr);
+  }
+
+  .live-panel__grid--of-5 {
+    grid-template-rows: 1.4fr repeat(2, 1fr);
+  }
+
+  .live-panel__grid .metric-card {
+    padding: 0.5rem 0.75rem;
+  }
+
+  .live-panel__grid .live-panel__lead {
+    order: -1;
+  }
+
+  .live-panel__grid .metric-card__value-row {
+    font-size: clamp(1.25rem, min(40cqi, 44cqb), 2.5rem);
+  }
+
+  /* em of the shared row size, so the fit still sizes every tile together. */
+  .live-panel__grid .live-panel__lead .metric-card__value {
+    font-size: 1.5em;
+  }
+
+  .live-panel__grid .live-panel__lead .metric-card__unit {
+    font-size: 0.63em;
   }
 }

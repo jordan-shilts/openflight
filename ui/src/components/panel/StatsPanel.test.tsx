@@ -3,8 +3,9 @@ import { fileURLToPath } from 'node:url';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { ReactNode } from 'react';
+import type { Profile } from '../../types/profile';
 import type { Shot } from '../../types/shot';
-import { StatsPanel } from './StatsPanel';
+import { StatsPanel, type StatsView } from './StatsPanel';
 
 const css = readFileSync(fileURLToPath(new URL('./panel.css', import.meta.url)), 'utf8');
 
@@ -41,7 +42,20 @@ function makeShot(overrides: Partial<Shot> = {}): Shot {
   };
 }
 
-const render = (shots: Shot[], activeClub = 'driver', headerAction?: ReactNode) =>
+function profile(id: string, name: string): Profile {
+  return { id, name, created_at: '2026-11-01T10:00:00Z', settings: {} };
+}
+
+const SOLO = [profile('james', 'James')];
+const GROUP = [profile('james', 'James'), profile('alex', 'Alex'), profile('guest', 'Guest')];
+
+const render = (
+  shots: Shot[],
+  activeClub = 'driver',
+  headerAction?: ReactNode,
+  profiles: Profile[] = SOLO,
+  view: StatsView = 'me'
+) =>
   text(
     renderToString(
       <StatsPanel
@@ -49,10 +63,25 @@ const render = (shots: Shot[], activeClub = 'driver', headerAction?: ReactNode) 
         activeClub={activeClub}
         profileId="james"
         profileName="James"
+        profiles={profiles}
+        view={view}
+        onChangeView={() => {}}
         headerAction={headerAction}
       />
     )
   );
+
+const renderLeaderboard = (shots: Shot[], activeClub = 'driver', profiles: Profile[] = GROUP) =>
+  render(shots, activeClub, undefined, profiles, 'leaderboard');
+
+function leaderboardRow(html: string, name: string): string {
+  const rows = [...html.matchAll(/<tr class="stats-leaderboard__row[\s\S]*?<\/tr>/g)].map((match) => match[0]);
+  return rows.find((row) => row.includes(`>${name}<`)) ?? '';
+}
+
+function header(html: string): string {
+  return html.match(/<header class="panel-header">[\s\S]*?<\/header>/)?.[0] ?? '';
+}
 
 describe('StatsPanel', () => {
   it('shows an empty state before any shots', () => {
@@ -189,5 +218,143 @@ describe('StatsPanel', () => {
     // Light theme made this look like a cream chip gutter over a white spreadsheet.
     expect(css).toMatch(/\.stats-panel \{[^}]*background: var\(--color-surface\)/);
     expect(css).not.toMatch(/\.stats-panel__grid \.metric-card--label-above \{[^}]*align-content: center/);
+  });
+
+  describe('leaderboard', () => {
+    const groupShots = [
+      makeShot({ ball_speed_mph: 140, estimated_carry_yards: 240, timestamp: 'j1' }),
+      makeShot({ ball_speed_mph: 150, estimated_carry_yards: 262, timestamp: 'j2' }),
+      makeShot({ ball_speed_mph: 120, estimated_carry_yards: 160, club: '7-iron', timestamp: 'j3' }),
+      makeShot({
+        profile_id: 'alex',
+        profile_name: 'Alex',
+        ball_speed_mph: 147,
+        estimated_carry_yards: 255,
+        timestamp: 'a1',
+      }),
+      makeShot({
+        profile_id: 'alex',
+        profile_name: 'Alex',
+        ball_speed_mph: 128,
+        estimated_carry_yards: 175,
+        club: '7-iron',
+        timestamp: 'a2',
+      }),
+    ];
+
+    it('offers no toggle to a single profile, so solo Stats is unchanged', () => {
+      const html = render(groupShots, 'driver', undefined, SOLO);
+
+      expect(html).not.toContain('>Leaderboard<');
+      expect(html).not.toContain('>Just me<');
+      expect(header(html)).toContain('panel-header__subtitle">James<');
+    });
+
+    it('stays on Just me for a single profile even if the leaderboard was chosen earlier', () => {
+      const html = render(groupShots, 'driver', undefined, SOLO, 'leaderboard');
+
+      expect(html).not.toContain('stats-leaderboard');
+      expect(html).toContain('stats-panel__grid--of-6');
+    });
+
+    it('offers the leaderboard from Just me once two profiles exist', () => {
+      const html = render(groupShots, 'driver', undefined, GROUP);
+
+      expect(header(html)).toContain('>Leaderboard<');
+      expect(html).toContain('stats-panel__grid--of-6');
+      expect(html).not.toContain('stats-leaderboard');
+    });
+
+    it('keeps Clear session next to the toggle', () => {
+      const html = render(
+        groupShots,
+        'driver',
+        <button type="button" className="panel-action">
+          Clear session
+        </button>,
+        GROUP
+      );
+
+      expect(header(html).indexOf('>Leaderboard<')).toBeLessThan(header(html).indexOf('Clear session'));
+    });
+
+    it('renders one row per profile with the five columns, titled Leaderboard, toggling back to Just me', () => {
+      const html = renderLeaderboard(groupShots);
+      const headings = [...html.matchAll(/<th scope="col"[^>]*>([^<]+)</g)].map((match) => match[1]);
+
+      expect(header(html)).toContain('panel-header__subtitle">Leaderboard<');
+      expect(header(html)).toContain('>Just me<');
+      expect(headings).toEqual(['Profile', 'Shots', 'Avg ball', 'Max ball', 'Avg carry', 'Longest']);
+      expect(html.match(/<tr class="stats-leaderboard__row/g)).toHaveLength(3);
+      expect(html).not.toContain('stats-panel__grid');
+    });
+
+    it('filters by the preselected club chip', () => {
+      const html = renderLeaderboard(groupShots, 'driver');
+      const james = leaderboardRow(html, 'James');
+      const alex = leaderboardRow(html, 'Alex');
+
+      expect(html).toMatch(/panel-chip--active[^>]*>DRIVER \(3\)</);
+      expect(james).toMatch(/stats-leaderboard__num">2<\/td>/);
+      expect(james).toContain('>145.0<');
+      expect(james).toContain('>150.0<');
+      expect(james).toContain('>251<');
+      expect(james).toContain('>262<');
+      expect(alex).toMatch(/stats-leaderboard__num">1<\/td>/);
+      expect(alex).toContain('>147.0<');
+    });
+
+    it('lists clubs from every profile, so a club only someone else hit can be compared', () => {
+      const html = renderLeaderboard([groupShots[0], groupShots[4]], '7-iron');
+
+      expect(html).toContain('All (2)');
+      expect(html).toMatch(/panel-chip--active[^>]*>7-IRON \(1\)</);
+      expect(leaderboardRow(html, 'Alex')).toContain('>128.0<');
+      expect(leaderboardRow(html, 'James')).toMatch(/stats-leaderboard__num">0<\/td>/);
+    });
+
+    it('highlights the best value per column in the accent class', () => {
+      const html = renderLeaderboard(groupShots, 'driver');
+      const bestCells = (row: string) =>
+        [...row.matchAll(/stats-leaderboard__best">([^<]+)</g)].map((match) => match[1]);
+
+      expect(bestCells(leaderboardRow(html, 'James'))).toEqual(['150.0', '262']);
+      expect(bestCells(leaderboardRow(html, 'Alex'))).toEqual(['147.0', '255']);
+      expect(bestCells(leaderboardRow(html, 'Guest'))).toEqual([]);
+    });
+
+    it('marks the active profile and dims profiles without shots', () => {
+      const html = renderLeaderboard(groupShots);
+
+      expect(leaderboardRow(html, 'James')).toContain('stats-leaderboard__row--active');
+      expect(leaderboardRow(html, 'James')).toContain('aria-current="true"');
+      expect(leaderboardRow(html, 'Alex')).not.toContain('stats-leaderboard__row--active');
+      expect(leaderboardRow(html, 'Guest')).toContain('stats-leaderboard__row--empty');
+      expect(leaderboardRow(html, 'Guest')).toContain('>—<');
+      expect(leaderboardRow(html, 'Alex')).not.toContain('stats-leaderboard__row--empty');
+    });
+
+    it('leaves swing-speed readings out of the comparison', () => {
+      const swing = makeShot({ mode: 'swing-speed', club: 'Swing Speed', ball_speed_mph: 99, timestamp: 's1' });
+      const html = renderLeaderboard([groupShots[0], swing], 'driver');
+
+      expect(html).not.toContain('SWING SPEED');
+      expect(html).toContain('All (1)');
+      expect(leaderboardRow(html, 'James')).toMatch(/stats-leaderboard__num">1<\/td>/);
+    });
+
+    it('shows the empty state when nobody has a ball shot yet', () => {
+      const html = renderLeaderboard([]);
+
+      expect(html).toContain('No shots yet');
+      expect(html).not.toContain('stats-leaderboard__table');
+      expect(header(html)).toContain('>Just me<');
+    });
+
+    it('drag-scrolls a long roster under a pinned header row', () => {
+      expect(css).toMatch(/\.stats-leaderboard \{[^}]*overflow-y: auto/);
+      expect(css).toMatch(/\.stats-leaderboard \{[^}]*touch-action: none/);
+      expect(css).toMatch(/\.stats-leaderboard__table thead th \{[^}]*position: sticky/);
+    });
   });
 });

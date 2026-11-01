@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Shot, SwingSpeedStats } from '../../types/shot';
 import {
   buildLiveMetrics,
+  leadMetricIds,
   LIVE_METRIC_COUNT,
   NO_VALUE,
   pinSelectedMetric,
@@ -287,5 +288,33 @@ describe('pinSelectedMetric', () => {
 
   it('handles an empty metric list', () => {
     expect(pinSelectedMetric([], 'ball_speed')).toEqual([]);
+  });
+});
+
+describe('leadMetricIds', () => {
+  const metrics = buildLiveMetrics(makeShot(), 'imperial', emptySwingStats);
+
+  it('leads with the default pin, ball speed, and carry', () => {
+    expect(leadMetricIds(pinSelectedMetric(metrics, null))).toEqual(['ball_speed', 'carry']);
+  });
+
+  it('pairs any other pinned metric with carry', () => {
+    expect(leadMetricIds(pinSelectedMetric(metrics, 'spin'))).toEqual(['spin', 'carry']);
+    expect(leadMetricIds(pinSelectedMetric(metrics, 'club_aoa'))).toEqual(['club_aoa', 'carry']);
+  });
+
+  it('pairs a pinned carry with the next metric', () => {
+    expect(leadMetricIds(pinSelectedMetric(metrics, 'carry'))).toEqual(['carry', 'ball_speed']);
+  });
+
+  it('uses the first two tiles of a swing-speed set, which has no carry', () => {
+    const swing = buildLiveMetrics(makeShot({ mode: 'swing-speed', club: 'Swing Speed' }), 'imperial', emptySwingStats);
+
+    expect(leadMetricIds(pinSelectedMetric(swing, 'swing_avg'))).toEqual(['swing_avg', 'swing_last']);
+  });
+
+  it('handles one metric or none', () => {
+    expect(leadMetricIds(metrics.slice(0, 1))).toEqual(['ball_speed']);
+    expect(leadMetricIds([])).toEqual([]);
   });
 });

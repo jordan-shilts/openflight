@@ -6,7 +6,7 @@ import { useI18n } from '../../i18n/useI18n';
 import { useSharedFitFontSize } from '../../hooks/useFitFontSize';
 import { MetricCard } from '../ui/MetricCard';
 import { PanelHeader } from './PanelHeader';
-import { buildLiveMetrics, pinSelectedMetric } from './liveMetrics';
+import { buildLiveMetrics, leadMetricIds, pinSelectedMetric } from './liveMetrics';
 
 interface LivePanelProps {
   shot: Shot | null;
@@ -23,6 +23,7 @@ interface LivePanelProps {
   isNewShot?: boolean;
   /** Pinned header control, e.g. Change club. */
   headerAction?: ReactNode;
+  playerStrip?: ReactNode;
 }
 
 /**
@@ -40,6 +41,7 @@ export function LivePanel({
   onSelectMetric,
   isNewShot = false,
   headerAction,
+  playerStrip,
 }: LivePanelProps) {
   const { locale, t } = useI18n();
   const { unitSystem } = useUnitPreference();
@@ -60,11 +62,20 @@ export function LivePanel({
     [displayedShot, unitSystem, swingStats, selectedMetricId, locale]
   );
   const selected = metrics[0] ?? null;
+  const leadIds = leadMetricIds(metrics);
   const gridRef = useSharedFitFontSize(
     metrics.length > 0,
     metrics.map((metric) => `${metric.value}:${metric.unit ?? ''}`).join('|')
   );
-  const header = <PanelHeader title={t('nav.live')} subtitle={profileName} club={clubLabel} actions={headerAction} />;
+  const header = (
+    <PanelHeader
+      title={t('nav.live')}
+      subtitle={profileName}
+      club={clubLabel}
+      actions={headerAction}
+      toolbar={playerStrip}
+    />
+  );
 
   if (!selected) {
     return (
@@ -96,6 +107,7 @@ export function LivePanel({
               confidenceLabel={metric.confidenceLabel}
               labelPosition="above"
               selected={metric.id === selected.id}
+              className={leadIds.includes(metric.id) ? 'live-panel__lead' : undefined}
               onClick={onSelectMetric ? () => onSelectMetric(metric.id) : undefined}
             />
           ))}

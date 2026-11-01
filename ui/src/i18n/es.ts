@@ -25,6 +25,7 @@ export const es: Messages = {
   'live.tiRadarDetail': 'Este golpe usó un ángulo de salida estimado. {reason}',
   'live.dismiss': 'Cerrar',
   'live.dismissAlert': 'Cerrar alerta del radar TI',
+  'live.switchProfile': 'Cambiar de perfil',
 
   'replay.open': 'Repetición',
   'replay.title': 'Repetición del golpe',
@@ -83,6 +84,9 @@ export const es: Messages = {
   'stats.avgClub': 'Media palo',
   'stats.avgSmash': 'Media smash',
   'stats.last': 'Último',
+  'stats.longestCarry': 'Más largo',
+  'stats.leaderboard': 'Clasificación',
+  'stats.justMe': 'Solo yo',
 
   'shots.noShots': 'Aún no hay golpes',
   'shots.noShotsDetail': 'Los golpes grabados aparecen aquí',
