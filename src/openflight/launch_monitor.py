@@ -302,6 +302,8 @@ class Shot:
     )
     spin_axis_deg: Optional[float] = None  # Spin axis tilt: 0=backspin, +right(fade), -left(draw)
     inclinometer: Optional[dict] = None  # Stable enclosure orientation used for this shot
+    # UI side view only: kept out of to_dict(), so session logs and cloud uploads skip it.
+    trajectory: Optional[dict] = field(default=None, repr=False)
 
     @property
     def ball_speed_ms(self) -> float:

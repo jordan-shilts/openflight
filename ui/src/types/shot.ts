@@ -9,6 +9,17 @@ export interface CameraReplay {
   display_mirror_horizontal: boolean;
 }
 
+export type TrajectoryPoint = [distanceYd: number, heightFt: number, lateralYd: number, timeS: number];
+
+/** The simulated flight behind `carry_spin_adjusted`; absent when carry came from an estimate. */
+export interface ShotTrajectory {
+  points: TrajectoryPoint[];
+  carry_yards: number;
+  apex_ft: number;
+  landing_angle_deg: number;
+  flight_time_s: number;
+}
+
 export interface Shot {
   mode?: 'rolling-buffer' | 'mock' | 'swing-speed';
   shot_number?: number | null;
@@ -60,6 +71,7 @@ export interface Shot {
   spin_method?: string | null;
   spin_multipath_fade_hz?: number | null;
   carry_spin_adjusted: number | null;
+  trajectory?: ShotTrajectory | null;
   swing_speed_duration_ms?: number;
   swing_speed_reading_count?: number;
   swing_speed_trigger_mph?: number;
@@ -151,6 +163,10 @@ export interface SwingSpeedStatsFilter {
 
 export function isSwingSpeedShot(shot: Shot | null): boolean {
   return shot?.mode === 'swing-speed' || shot?.club === 'Swing Speed';
+}
+
+export function getDisplayCarryYards(shot: Shot): number {
+  return shot.carry_spin_adjusted ?? shot.estimated_carry_yards;
 }
 
 export function getSwingSpeedMph(shot: Shot): number {

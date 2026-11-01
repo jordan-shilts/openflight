@@ -26,6 +26,8 @@ export const pt: Messages = {
   'live.dismiss': 'Fechar',
   'live.dismissAlert': 'Fechar alerta do radar TI',
   'live.switchProfile': 'Trocar de perfil',
+  'live.showFlight': 'Voo',
+  'live.showData': 'Dados',
 
   'replay.open': 'Replay',
   'replay.title': 'Replay da tacada',
@@ -72,6 +74,13 @@ export const pt: Messages = {
   'shape.fade': 'Fade',
   'shape.draw': 'Draw',
   'shape.straight': 'Reto',
+
+  'flight.apex': 'Altura máx.',
+  'flight.landingAngle': 'Âng. queda',
+  'flight.hangTime': 'Tempo de voo',
+  'flight.unavailable': 'Sem voo para esta tacada',
+  'flight.unavailableDetail': 'O voo precisa do ângulo de saída e do modelo balístico',
+  'flight.chartLabel': 'Vista lateral do voo: carry {carry} {distanceUnit}, altura máx. {apex} {heightUnit}',
 
   'stats.filterByClub': 'Filtrar por taco',
   'stats.all': 'Todos ({count})',

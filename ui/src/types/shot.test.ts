@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { Shot } from './shot';
-import { countShotsByProfile, filterShotsByProfile, excludeShotsByProfile } from './shot';
+import { countShotsByProfile, filterShotsByProfile, excludeShotsByProfile, getDisplayCarryYards } from './shot';
+
+describe('getDisplayCarryYards', () => {
+  it('prefers the committed carry and falls back to the speed estimate', () => {
+    expect(getDisplayCarryYards({ carry_spin_adjusted: 143, estimated_carry_yards: 151 } as Shot)).toBe(143);
+    expect(getDisplayCarryYards({ carry_spin_adjusted: null, estimated_carry_yards: 151 } as Shot)).toBe(151);
+  });
+});
 
 describe('filterShotsByProfile', () => {
   const shotWith = (profileId: string | undefined): Shot => ({ profile_id: profileId, ball_speed_mph: 100 }) as Shot;

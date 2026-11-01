@@ -1332,7 +1332,8 @@ class TestShotToDict:
         raw = shot.to_dict()
         result = shot_to_dict(shot)
 
-        assert set(result) == set(raw) - {"mode", "readings", "readings_count"}
+        assert set(result) == (set(raw) - {"mode", "readings", "readings_count"}) | {"trajectory"}
+        assert result["trajectory"] is None
         assert result["ball_speed_mph"] == 150.5
         assert result["club_speed_mph"] == 103.2
         assert result["club"] == "driver"
@@ -5091,3 +5092,199 @@ class TestBallisticCarryPrecedence:
         resolved = server_module.resolve_shot(forwarded[0], server_module.SimPlayerState())
         assert resolved.carry_yards == pytest.approx(shot.carry_spin_adjusted)
         assert resolved.carry_yards > 135.0
+
+
+class TestFlightTrajectoryPayload:
+    """The UI shot payload carries the side-view flight behind its carry.
+
+    The trajectory comes from the same simulate() call that commits
+    carry_spin_adjusted, so the Flight view lands where the Carry tile says.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _isolate_finalization(self, monkeypatch):
+        server_module._reset_shot_sequence()
+        monkeypatch.setattr(server_module, "monitor", None)
+        monkeypatch.setattr(server_module, "kld7_vertical", None)
+        monkeypatch.setattr(server_module, "kld7_horizontal", None)
+        monkeypatch.setattr(server_module, "camera_capture_runtime", None)
+        monkeypatch.setattr(server_module, "ball_speed_correction_enabled", False)
+        monkeypatch.setattr(server_module, "calculated_spin_enabled", False)
+        monkeypatch.setattr(server_module, "debug_mode", False)
+        monkeypatch.setattr(server_module, "sim_connectors", [])
+        monkeypatch.setattr(server_module, "get_session_logger", lambda: None)
+        self.emitted = []
+        monkeypatch.setattr(
+            server_module.socketio,
+            "emit",
+            lambda event, payload=None, **_kwargs: self.emitted.append((event, payload)),
+        )
+        yield
+        _wait_for_shot_finalization_idle()
+
+    def _emitted_shot(self) -> dict:
+        shots = [payload["shot"] for event, payload in self.emitted if event == "shot"]
+        assert len(shots) == 1
+        return shots[0]
+
+    @staticmethod
+    def _driver_shot(**overrides) -> Shot:
+        fields = dict(
+            ball_speed_mph=165.0,
+            club_speed_mph=112.0,
+            timestamp=datetime(2026, 11, 1, 12, 0, 0),
+            impact_timestamp=100.0,
+            club=ClubType.DRIVER,
+            spin_rpm=2700.0,
+            spin_confidence=0.9,
+            launch_angle_vertical=11.0,
+            launch_angle_confidence=0.9,
+            mode="rolling-buffer",
+        )
+        fields.update(overrides)
+        return Shot(**fields)
+
+    @staticmethod
+    def _mock_monitor(club: ClubType) -> MockLaunchMonitor:
+        mock = MockLaunchMonitor(processing_step_s=0)
+        mock.set_club(club)
+        mock.start(shot_callback=server_module.on_shot_detected)
+        return mock
+
+    def test_real_shot_trajectory_lands_at_the_committed_carry(self, monkeypatch):
+        monkeypatch.setattr(server_module, "ballistics_enabled", True)
+        shot = self._driver_shot()
+
+        server_module._finalize_shot_detected(shot, emit_event="shot")
+
+        payload = self._emitted_shot()
+        trajectory = payload["trajectory"]
+        expected = server_module.simulate(server_module.resolve_launch(shot))
+        assert shot.carry_spin_adjusted == pytest.approx(expected.carry_yards)
+        assert payload["carry_spin_adjusted"] == round(shot.carry_spin_adjusted)
+        assert trajectory["carry_yards"] == pytest.approx(shot.carry_spin_adjusted, abs=0.05)
+        landing_distance, landing_height, _lateral, landing_time = trajectory["points"][-1]
+        assert landing_distance == pytest.approx(shot.carry_spin_adjusted, abs=0.05)
+        assert landing_height == pytest.approx(0.0, abs=0.05)
+        assert landing_time == pytest.approx(trajectory["flight_time_s"], abs=0.005)
+        assert trajectory["apex_ft"] == pytest.approx(expected.apex_yards * 3.0, abs=0.05)
+        assert trajectory["landing_angle_deg"] == pytest.approx(
+            expected.landing_angle_deg, abs=0.05
+        )
+
+    def test_real_shot_trajectory_is_downsampled(self, monkeypatch):
+        monkeypatch.setattr(server_module, "ballistics_enabled", True)
+        shot = self._driver_shot()
+        full = server_module.simulate(server_module.resolve_launch(shot))
+
+        server_module._finalize_shot_detected(shot, emit_event="shot")
+
+        points = self._emitted_shot()["trajectory"]["points"]
+        assert len(full.points) > 100
+        assert 40 <= len(points) <= 61
+        assert points[0] == [0.0, 0.0, 0.0, 0.0]
+        assert all(len(point) == 4 for point in points)
+
+    def test_table_carry_sends_no_trajectory(self, monkeypatch):
+        monkeypatch.setattr(server_module, "ballistics_enabled", False)
+        shot = self._driver_shot()
+
+        server_module._finalize_shot_detected(shot, emit_event="shot")
+
+        payload = self._emitted_shot()
+        assert payload["carry_spin_adjusted"] is not None
+        assert payload["trajectory"] is None
+
+    def test_shot_without_launch_angle_sends_no_trajectory(self, monkeypatch):
+        monkeypatch.setattr(server_module, "ballistics_enabled", True)
+        monkeypatch.setattr(server_module, "_ensure_user_facing_launch_angles", lambda _shot: None)
+        shot = self._driver_shot(launch_angle_vertical=None, launch_angle_confidence=None)
+
+        server_module._finalize_shot_detected(shot, emit_event="shot")
+
+        assert self._emitted_shot()["trajectory"] is None
+
+    @pytest.mark.parametrize("club", [ClubType.DRIVER, ClubType.IRON_7, ClubType.PW])
+    def test_simulated_mock_shot_publishes_a_matching_trajectory(self, monkeypatch, club):
+        monkeypatch.setattr(server_module, "ballistics_enabled", True)
+        mock = self._mock_monitor(club)
+        monkeypatch.setattr(server_module, "monitor", mock)
+
+        shot = mock.simulate_shot()
+        _wait_for_shot_finalization_idle()
+
+        payload = self._emitted_shot()
+        trajectory = payload["trajectory"]
+        expected = server_module.simulate(server_module.resolve_launch(shot)).carry_yards
+        assert shot.carry_spin_adjusted == pytest.approx(expected)
+        assert payload["carry_spin_adjusted"] == round(shot.carry_spin_adjusted)
+        assert trajectory["points"][-1][0] == pytest.approx(shot.carry_spin_adjusted, abs=0.05)
+        assert trajectory["apex_ft"] > 0
+        assert 2 <= len(trajectory["points"]) <= 61
+
+    def test_mock_shot_keeps_its_estimate_when_ballistics_is_off(self, monkeypatch):
+        monkeypatch.setattr(server_module, "ballistics_enabled", False)
+        mock = self._mock_monitor(ClubType.DRIVER)
+        monkeypatch.setattr(server_module, "monitor", mock)
+
+        shot = mock.simulate_shot()
+        _wait_for_shot_finalization_idle()
+
+        payload = self._emitted_shot()
+        assert shot.carry_spin_adjusted is None
+        assert payload["carry_spin_adjusted"] is None
+        assert payload["trajectory"] is None
+
+    def test_session_state_replays_trajectories_for_reconnecting_uis(self, monkeypatch):
+        monkeypatch.setattr(server_module, "ballistics_enabled", True)
+        mock = self._mock_monitor(ClubType.IRON_7)
+        monkeypatch.setattr(server_module, "monitor", mock)
+
+        mock.simulate_shot()
+        mock.simulate_shot()
+        _wait_for_shot_finalization_idle()
+
+        published = [
+            payload["shot"]["trajectory"] for event, payload in self.emitted if event == "shot"
+        ]
+        replayed = [row["trajectory"] for row in server_module._session_state_payload()["shots"]]
+        assert replayed == published
+        assert all(trajectory is not None for trajectory in replayed)
+
+    def test_points_stay_out_of_session_log_phone_events_and_sims(self, monkeypatch, tmp_path):
+        from openflight.ble.protocol import build_shot_event
+        from openflight.session_logger import SessionLogger
+
+        monkeypatch.setattr(server_module, "ballistics_enabled", True)
+        session_log = SessionLogger(log_dir=tmp_path, enabled=True)
+        session_log.start_session(mode="rolling-buffer", trigger_type="sound")
+        monkeypatch.setattr(server_module, "get_session_logger", lambda: session_log)
+        forwarded = []
+        monkeypatch.setattr(server_module, "_forward_shot_to_simulators", forwarded.append)
+        shot = self._driver_shot()
+
+        server_module._finalize_shot_detected(shot, emit_event="shot")
+
+        payload = self._emitted_shot()
+        assert payload["trajectory"] is not None
+        entries = [json.loads(line) for line in session_log.session_path.read_text().splitlines()]
+        logged = [entry for entry in entries if entry["type"] == "shot_detected"]
+        assert len(logged) == 1
+        assert "trajectory" not in logged[0]
+        assert "trajectory" not in shot.to_dict()
+        assert "trajectory" not in build_shot_event(payload, final=True)
+        resolved = server_module.resolve_shot(forwarded[0], server_module.SimPlayerState())
+        assert "trajectory" not in resolved.as_values()
+        assert resolved.carry_yards == pytest.approx(shot.carry_spin_adjusted)
+
+    def test_swing_speed_rows_share_the_trajectory_key(self):
+        event = SwingSpeedEvent(
+            peak_speed_mph=101.4,
+            timestamp=datetime(2026, 11, 1, 12, 0, 0),
+            duration_ms=340.0,
+            reading_count=9,
+            trigger_speed_mph=32.0,
+            peak_magnitude=42,
+        )
+
+        assert swing_speed_to_shot_dict(event)["trajectory"] is None

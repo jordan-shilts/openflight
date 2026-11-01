@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import type { ReactNode } from 'react';
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { Shot } from '../../types/shot';
@@ -282,5 +283,73 @@ describe('LivePanel', () => {
     expect(html).toContain('live-panel__grid--of-5');
     expect(html.match(/metric-card--interactive/g)).toHaveLength(5);
     expect(tileLabels(html)[0]).toBe('Last swing');
+  });
+
+  describe('flight view', () => {
+    const trajectory = {
+      points: [
+        [0, 0, 0, 0],
+        [120, 80, -1, 3],
+        [214.3, 0, -2, 6],
+      ] as [number, number, number, number][],
+      carry_yards: 214.3,
+      apex_ft: 80,
+      landing_angle_deg: 40.1,
+      flight_time_s: 6,
+    };
+
+    function renderFlight(shots: Shot[], headerAction?: ReactNode) {
+      const latest = shots[shots.length - 1] ?? null;
+      return text(
+        renderToString(
+          <LivePanel
+            shot={latest}
+            shots={shots}
+            profileId="james"
+            profileName="James"
+            clubLabel="DR"
+            onSelectMetric={() => {}}
+            headerAction={headerAction}
+            view="flight"
+          />
+        )
+      );
+    }
+
+    it('swaps the metric table for the side view under the same header', () => {
+      const html = renderFlight([makeShot({ trajectory })], <button type="button">Data</button>);
+
+      expect(html).toContain('live-panel__body--flight');
+      expect(html).toContain('<svg class="flight-chart"');
+      expect(html).not.toContain('live-panel__grid');
+      expect(html).toContain('panel-header__title">Live<');
+      expect(html).toContain('panel-header__club">DR<');
+      expect(html).toMatch(/panel-header__actions[\s\S]*>Data</);
+    });
+
+    it("lands the latest shot at the Carry tile's value and ghosts only this profile's earlier shots", () => {
+      const earlier = makeShot({ timestamp: '2026-08-19T09:58:00Z', trajectory });
+      const other = makeShot({ timestamp: '2026-08-19T09:59:00Z', trajectory, profile_id: 'alex' });
+      const latest = makeShot({ trajectory });
+
+      const html = renderFlight([earlier, other, latest]);
+
+      expect(html).toMatch(/flight-chart__landing"[^>]*>214 yds</);
+      expect(html.match(/class="flight-chart__ghost"/g)).toHaveLength(1);
+    });
+
+    it('keeps the ready state before the first shot', () => {
+      const html = renderFlight([]);
+
+      expect(html).toContain('Ready');
+      expect(html).not.toContain('flight-chart');
+    });
+
+    it('defaults to the metric table', () => {
+      const html = render(makeShot({ trajectory }));
+
+      expect(html).toContain('live-panel__grid');
+      expect(html).not.toContain('flight-chart');
+    });
   });
 });

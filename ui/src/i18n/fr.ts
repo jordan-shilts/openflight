@@ -26,6 +26,8 @@ export const fr: Messages = {
   'live.dismiss': 'Fermer',
   'live.dismissAlert': 'Fermer l’alerte radar TI',
   'live.switchProfile': 'Changer de profil',
+  'live.showFlight': 'Vol',
+  'live.showData': 'Données',
 
   'replay.open': 'Ralenti',
   'replay.title': 'Ralenti du coup',
@@ -72,6 +74,13 @@ export const fr: Messages = {
   'shape.fade': 'Fade',
   'shape.draw': 'Draw',
   'shape.straight': 'Droit',
+
+  'flight.apex': 'Apogée',
+  'flight.landingAngle': 'Angle chute',
+  'flight.hangTime': 'Temps de vol',
+  'flight.unavailable': 'Pas de vol pour ce coup',
+  'flight.unavailableDetail': 'Le vol nécessite un angle de lancement et le modèle balistique',
+  'flight.chartLabel': 'Vue latérale du vol : carry {carry} {distanceUnit}, apogée {apex} {heightUnit}',
 
   'stats.filterByClub': 'Filtrer par club',
   'stats.all': 'Tous ({count})',
