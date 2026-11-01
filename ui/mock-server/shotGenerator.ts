@@ -27,6 +27,7 @@ const CLUB_BALL_SPEEDS: Record<string, [number, number, number]> = {
   gw: [76, 5, 1.2],
   sw: [73, 5, 1.19],
   lw: [70, 5, 1.18],
+  putter: [6, 2.5, 1.45],
   unknown: [120, 15, 1.35],
 };
 
@@ -52,6 +53,7 @@ const CLUB_SPIN: Record<string, [number, number]> = {
   gw: [9200, 900],
   sw: [9800, 1000],
   lw: [10200, 1000],
+  putter: [80, 40],
   unknown: [5000, 800],
 };
 
@@ -77,6 +79,7 @@ const CLUB_LAUNCH: Record<string, [number, number]> = {
   gw: [30.0, 3.5],
   sw: [32.0, 4.0],
   lw: [35.0, 4.0],
+  putter: [1.5, 0.3],
   unknown: [18.0, 3.0],
 };
 
@@ -104,6 +107,12 @@ function spinQuality(confidence: number): SpinQuality {
   return 'low';
 }
 
+/** Open-Birdie's putt: a pure roll at 0.6 m/s² on a flat green, in feet. */
+export function puttRollFeet(ballSpeedMph: number): number {
+  const speedMps = ballSpeedMph * 0.44704;
+  return ((speedMps * speedMps) / (2 * 0.6)) * 3.28084;
+}
+
 /** Simple TrackMan-ish carry estimate (yards) from ball speed. */
 export function estimateCarryYards(ballSpeedMph: number): number {
   return Math.round(ballSpeedMph * 1.45);
@@ -122,23 +131,30 @@ export function generateShot(options: GenerateShotOptions): Shot {
   const [avgSpin, spinStd] = CLUB_SPIN[club] ?? CLUB_SPIN.unknown!;
   const [avgLaunch, launchStd] = CLUB_LAUNCH[club] ?? CLUB_LAUNCH.unknown!;
 
-  const ballSpeed = options.ballSpeed ?? Math.max(50, Math.min(200, gauss(avgSpeed, speedStd)));
+  // Putts skip the full-swing clamps and stay under 2° so Open-Birdie rolls them, as in the Python mock.
+  const isPutt = club === 'putter';
+  const ballSpeed =
+    options.ballSpeed ??
+    (isPutt ? Math.max(1.5, gauss(avgSpeed, speedStd)) : Math.max(50, Math.min(200, gauss(avgSpeed, speedStd))));
   const smashFactor = smash + uniform(-0.03, 0.03);
   const clubSpeed = ballSpeed / smashFactor;
-  const spinRpm = Math.max(1000, gauss(avgSpin, spinStd));
+  const spinRpm = Math.max(isPutt ? 0 : 1000, gauss(avgSpin, spinStd));
   const spinConfidence = pick(SPIN_CONFIDENCES);
-  const launchV = Math.max(5.0, gauss(avgLaunch, launchStd));
+  const launchV = isPutt
+    ? Math.min(1.9, Math.max(0.5, gauss(avgLaunch, launchStd)))
+    : Math.max(5.0, gauss(avgLaunch, launchStd));
   const launchH = gauss(0, 2.0);
   const launchConfidence = Math.round(uniform(0.5, 0.95) * 100) / 100;
-  const clubAoa = Math.round(gauss(-4.0, 2.5) * 10) / 10;
+  const clubAoa = Math.round((isPutt ? gauss(2.0, 1.0) : gauss(-4.0, 2.5)) * 10) / 10;
   const clubPath = Math.round(uniform(-5.0, 5.0) * 10) / 10;
   const spinAxis = Math.round((launchH - uniform(-5.0, 5.0)) * 10) / 10;
-  const carry = estimateCarryYards(ballSpeed);
+  const roundedBallSpeed = Math.round(ballSpeed * 10) / 10;
+  const carry = isPutt ? 0 : estimateCarryYards(ballSpeed);
   const smashRounded = Math.round((ballSpeed / clubSpeed) * 100) / 100;
 
   return {
     mode: 'mock',
-    ball_speed_mph: Math.round(ballSpeed * 10) / 10,
+    ball_speed_mph: roundedBallSpeed,
     club_speed_mph: Math.round(clubSpeed * 10) / 10,
     smash_factor: smashRounded,
     estimated_carry_yards: carry,
@@ -160,6 +176,7 @@ export function generateShot(options: GenerateShotOptions): Shot {
     spin_quality: spinQuality(spinConfidence),
     spin_source: 'calculated',
     carry_spin_adjusted: carry,
+    roll_distance_ft: isPutt ? Math.round(puttRollFeet(roundedBallSpeed) * 10) / 10 : null,
     camera_replay: {
       id: `mock-${randomUUID()}`,
       frame_count: 99,
