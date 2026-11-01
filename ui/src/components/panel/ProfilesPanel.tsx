@@ -1,6 +1,7 @@
 import { useMemo, useRef, type ReactNode } from 'react';
 import type { Profile } from '../../types/profile';
 import type { Shot } from '../../types/shot';
+import { countShotsByProfile } from '../../types/shot';
 import { useDragScroll } from '../../hooks/useDragScroll';
 import { useI18n } from '../../i18n/useI18n';
 import { PanelHeader } from './PanelHeader';
@@ -36,15 +37,7 @@ export function ProfilesPanel({
   // orphan shots under an id that can never be selected again.
   const canRemove = profiles.length > 1;
   const activeProfile = profiles.find((profile) => profile.id === activeProfileId) ?? null;
-  const shotCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const shot of shots) {
-      const id = shot.profile_id;
-      if (!id) continue;
-      counts[id] = (counts[id] ?? 0) + 1;
-    }
-    return counts;
-  }, [shots]);
+  const shotCounts = useMemo(() => countShotsByProfile(shots), [shots]);
 
   return (
     <div className="panel">

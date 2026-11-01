@@ -162,6 +162,16 @@ export function filterShotsByProfile(shots: Shot[], profileId: string): Shot[] {
   return shots.filter((shot) => shot.profile_id === profileId);
 }
 
+export function countShotsByProfile(shots: Shot[]): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const shot of shots) {
+    const id = shot.profile_id;
+    if (!id) continue;
+    counts[id] = (counts[id] ?? 0) + 1;
+  }
+  return counts;
+}
+
 export function excludeShotsByProfile(shots: Shot[], profileId: string): Shot[] {
   if (!profileId) return shots;
   return shots.filter((shot) => shot.profile_id !== profileId);

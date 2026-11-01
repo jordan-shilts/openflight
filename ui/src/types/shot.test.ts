@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Shot } from './shot';
-import { filterShotsByProfile, excludeShotsByProfile } from './shot';
+import { countShotsByProfile, filterShotsByProfile, excludeShotsByProfile } from './shot';
 
 describe('filterShotsByProfile', () => {
   const shotWith = (profileId: string | undefined): Shot => ({ profile_id: profileId, ball_speed_mph: 100 }) as Shot;
@@ -44,5 +44,20 @@ describe('excludeShotsByProfile', () => {
     const shots = [shotWith('aaa'), shotWith('bbb')];
 
     expect(excludeShotsByProfile(shots, '')).toEqual(shots);
+  });
+});
+
+describe('countShotsByProfile', () => {
+  const shotWith = (profileId: string | undefined): Shot => ({ profile_id: profileId, ball_speed_mph: 100 }) as Shot;
+
+  it('counts shots per profile id', () => {
+    const shots = [shotWith('aaa'), shotWith('bbb'), shotWith('aaa')];
+
+    expect(countShotsByProfile(shots)).toEqual({ aaa: 2, bbb: 1 });
+  });
+
+  it('skips unstamped shots and returns an empty map for no shots', () => {
+    expect(countShotsByProfile([shotWith(undefined), shotWith('')])).toEqual({});
+    expect(countShotsByProfile([])).toEqual({});
   });
 });
