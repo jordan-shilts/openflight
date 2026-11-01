@@ -668,6 +668,74 @@
   font-size: 0.42em;
 }
 
+/* ---------------------------------------------------------- player strip -- */
+
+.panel-header:has(> .player-strip) {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+/* A second header row; on 800x400 it moves beside the title so the grid keeps its height. */
+.player-strip {
+  order: 1;
+  flex: 1 0 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+@media (max-height: 440px) {
+  .panel-header:has(> .player-strip) {
+    flex-wrap: nowrap;
+  }
+
+  .player-strip {
+    order: 0;
+    flex: 1 1 0;
+  }
+}
+
+/* Shrinks to its chips so + follows the last name until the row overflows. */
+.player-strip__scroll {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: none;
+  overscroll-behavior: contain;
+  touch-action: none;
+}
+
+.player-strip .panel-chip {
+  touch-action: none;
+}
+
+.player-strip__name {
+  max-width: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.player-strip__count {
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+
+.panel-chip--active .player-strip__count {
+  color: color-mix(in srgb, var(--color-accent-fg) 70%, transparent);
+}
+
+.player-strip__add {
+  justify-content: center;
+  padding: 0 14px;
+  border-style: dashed;
+  color: var(--color-text-muted);
+  font-size: 0.875rem;
+  letter-spacing: 0;
+}
+
 /* ----------------------------------------------------------- stats panel -- */
 
 .stats-panel {

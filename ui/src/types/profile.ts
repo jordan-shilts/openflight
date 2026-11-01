@@ -12,3 +12,6 @@ export interface ProfilesSnapshot {
   profiles: Profile[];
   active_profile_id: string;
 }
+
+/** Mirrors MAX_PROFILES in src/openflight/profiles.py; the server ignores adds past it. */
+export const MAX_PROFILES = 12;

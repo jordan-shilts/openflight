@@ -14,6 +14,8 @@ interface PanelHeaderProps {
   club?: ReactNode;
   /** Right-hand `PanelAction` buttons: primary, secondary, or danger. */
   actions?: ReactNode;
+  /** Controls between identity and actions, e.g. the Live profile strip; their CSS places them. */
+  toolbar?: ReactNode;
   /**
    * Socket connection. Omit to read `useSystemStore`; pass it in tests so SSR
    * is not stuck with the store's initial `false`.
@@ -51,6 +53,7 @@ export function PanelHeader({
   subtitle,
   club,
   actions,
+  toolbar,
   connected: connectedProp,
   radarConnected: radarConnectedProp,
   statusMenuOpen: statusMenuOpenProp,
@@ -91,6 +94,7 @@ export function PanelHeader({
         {subtitle ? <IdentityPart className="panel-header__subtitle">{subtitle}</IdentityPart> : null}
         {club ? <IdentityPart className="panel-header__club">{club}</IdentityPart> : null}
       </div>
+      {toolbar}
       {actions ? <div className="panel-header__actions">{actions}</div> : null}
       {menuOpen ? (
         <StatusMenu

@@ -191,6 +191,30 @@ describe('LivePanel', () => {
     expect(header).toContain('panel-action');
   });
 
+  it('puts the player strip in the header, after the title and before the actions, with or without a shot', () => {
+    const renderWithStrip = (shot: Shot | null) =>
+      text(
+        renderToString(
+          <LivePanel
+            shot={shot}
+            shots={shot ? [shot] : []}
+            profileId="james"
+            profileName="James"
+            clubLabel="DR"
+            headerAction={<button type="button">Change club</button>}
+            playerStrip={<div className="player-strip">strip</div>}
+          />
+        )
+      );
+
+    for (const html of [renderWithStrip(makeShot()), renderWithStrip(null)]) {
+      const header = html.match(/<header class="panel-header">[\s\S]*?<\/header>/)?.[0] ?? '';
+      const strip = header.indexOf('class="player-strip"');
+      expect(strip).toBeGreaterThan(header.indexOf('panel-header__identity'));
+      expect(strip).toBeLessThan(header.indexOf('panel-header__actions'));
+    }
+  });
+
   it("shows the current profile's last shot, not the previous profile's", () => {
     const james = makeShot({ ball_speed_mph: 90, timestamp: 'a' });
     const alex = makeShot({ profile_id: 'alex', profile_name: 'Alex', ball_speed_mph: 150, timestamp: 'b' });

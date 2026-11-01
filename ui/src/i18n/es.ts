@@ -25,6 +25,7 @@ export const es: Messages = {
   'live.tiRadarDetail': 'Este golpe usó un ángulo de salida estimado. {reason}',
   'live.dismiss': 'Cerrar',
   'live.dismissAlert': 'Cerrar alerta del radar TI',
+  'live.switchProfile': 'Cambiar de perfil',
 
   'replay.open': 'Repetición',
   'replay.title': 'Repetición del golpe',

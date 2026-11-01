@@ -25,6 +25,7 @@ export const pt: Messages = {
   'live.tiRadarDetail': 'Esta tacada usou um ângulo de saída estimado. {reason}',
   'live.dismiss': 'Fechar',
   'live.dismissAlert': 'Fechar alerta do radar TI',
+  'live.switchProfile': 'Trocar de perfil',
 
   'replay.open': 'Replay',
   'replay.title': 'Replay da tacada',

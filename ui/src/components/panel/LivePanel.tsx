@@ -23,6 +23,7 @@ interface LivePanelProps {
   isNewShot?: boolean;
   /** Pinned header control, e.g. Change club. */
   headerAction?: ReactNode;
+  playerStrip?: ReactNode;
 }
 
 /**
@@ -40,6 +41,7 @@ export function LivePanel({
   onSelectMetric,
   isNewShot = false,
   headerAction,
+  playerStrip,
 }: LivePanelProps) {
   const { locale, t } = useI18n();
   const { unitSystem } = useUnitPreference();
@@ -64,7 +66,15 @@ export function LivePanel({
     metrics.length > 0,
     metrics.map((metric) => `${metric.value}:${metric.unit ?? ''}`).join('|')
   );
-  const header = <PanelHeader title={t('nav.live')} subtitle={profileName} club={clubLabel} actions={headerAction} />;
+  const header = (
+    <PanelHeader
+      title={t('nav.live')}
+      subtitle={profileName}
+      club={clubLabel}
+      actions={headerAction}
+      toolbar={playerStrip}
+    />
+  );
 
   if (!selected) {
     return (

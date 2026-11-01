@@ -23,6 +23,7 @@ export const en = {
   'live.tiRadarDetail': 'This shot used an estimated launch angle. {reason}',
   'live.dismiss': 'Dismiss',
   'live.dismissAlert': 'Dismiss TI radar alert',
+  'live.switchProfile': 'Switch profile',
 
   'replay.open': 'Replay',
   'replay.title': 'Shot replay',

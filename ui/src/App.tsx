@@ -27,6 +27,7 @@ import {
   PanelHeader,
   PanelAction,
   PickerOverlay,
+  PlayerStrip,
   ShotsPanel,
   StatsPanel,
   clubSections,
@@ -327,6 +328,15 @@ function AppContent() {
                 onSelectMetric={setHeroMetricId}
                 isNewShot={profileIsNewShot}
                 headerAction={liveHeaderActions}
+                playerStrip={
+                  <PlayerStrip
+                    profiles={profiles}
+                    activeProfileId={activeProfileId}
+                    shots={shots}
+                    onSelectProfile={(profileId) => socketService.setActiveProfile(profileId)}
+                    onAddProfile={openAddProfile}
+                  />
+                }
               />
             </ShotProcessingArea>
             {debugMode && <SimShotBadges latestSimShots={latestSimShots} />}
