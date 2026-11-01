@@ -124,6 +124,24 @@ errors the same way regardless of simulator.
 > device, the codec is where you'd add an outbound `build_club_change`-style
 > method — no other layer changes.)
 
+## Putts
+
+When a simulator selects the putter (`PT`, which Open-Birdie sends once the
+ball is on the green), OpenFlight switches to its **Putter** club. A putter
+shot that launches under 2° at under 40 mph is handled the way Open-Birdie
+handles it: no flight is simulated, carry is 0, and the roll on a flat green
+is v² / (2 × 0.6 m/s²), so 4.5 mph rolls about 11 ft. Live shows it as
+**Roll** in feet, the Flight view says the putt has no flight, and Stats keeps
+putts out of carry averages. Ball speed, launch angle and spin go to the
+simulator unchanged.
+
+> **Known limit: the radar does not capture putts yet.** Putts start at about
+> 2–12 mph. The sound-triggered rolling buffer rejects balls under 15 mph (its
+> DC mask hides that band), the speed and hardware triggers need a 35 mph
+> ball, and the OPS243 minimum speed filter is 10 mph, so a real putt records
+> no shot. Putting works end to end in mock mode (`scripts/start-kiosk.sh
+> --mock`); the trigger logic is unchanged until it can be tested on hardware.
+
 ## Adding a new simulator
 
 1. **Create a codec.** Add `src/openflight/<sim>/codec.py` implementing the
