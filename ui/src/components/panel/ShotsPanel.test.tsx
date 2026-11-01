@@ -108,6 +108,12 @@ describe('ShotsPanel', () => {
     expect(html).not.toContain('>119<');
   });
 
+  it('shows a putt row with its roll in feet instead of a carry', () => {
+    const html = render([makeShot({ club: 'putter', carry_spin_adjusted: 0, roll_distance_ft: 19.7 })]);
+
+    expect(html).toContain('shots-panel__value--accent">20 ft<');
+  });
+
   it('renders placeholders rather than blanks for missing values', () => {
     const html = render([makeShot({ club_speed_mph: null, launch_angle_vertical: null, spin_rpm: null })]);
 

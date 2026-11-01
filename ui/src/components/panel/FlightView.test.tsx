@@ -75,6 +75,18 @@ describe('FlightView', () => {
     vi.unstubAllGlobals();
   });
 
+  it('says a putt has no flight and how far it rolled', () => {
+    const putt = makeShot({ club: 'putter', carry_spin_adjusted: 0, trajectory: null, roll_distance_ft: 11.1 });
+
+    const html = render(putt);
+
+    expect(html).toContain('flight-view--empty');
+    expect(html).toContain('No flight for a putt');
+    expect(html).toContain('It rolled 11 ft along the green');
+    expect(html).not.toContain('<svg');
+    expect(render(putt, [], false, 'metric')).toContain('It rolled 3.4 m along the green');
+  });
+
   it('draws the landed flight with apex and landing labels', () => {
     const html = render(makeShot());
 

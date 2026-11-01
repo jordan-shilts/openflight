@@ -1,6 +1,6 @@
 import type { Profile } from '../../types/profile';
 import type { Shot } from '../../types/shot';
-import { computeStats, filterShotsByProfile, getDisplayCarryYards, isSwingSpeedShot } from '../../types/shot';
+import { computeStats, filterShotsByProfile, isSwingSpeedShot, statsCarryYards } from '../../types/shot';
 import type { UnitSystem } from '../../utils/units';
 import { formatDistance, formatSpeed } from '../../utils/units';
 import { NO_VALUE } from './liveMetrics';
@@ -33,13 +33,13 @@ function columnTexts(shots: Shot[], unitSystem: UnitSystem): Record<LeaderboardC
 
   const stats = computeStats(shots);
   // Same carry source as computeStats' average, so a row matches its Just me tiles.
-  const longestCarry = Math.max(...shots.map(getDisplayCarryYards));
+  const carries = statsCarryYards(shots);
 
   return {
     avg_ball: formatSpeed(stats.avg_ball_speed, unitSystem, 1),
     max_ball: formatSpeed(stats.max_ball_speed, unitSystem, 1),
-    avg_carry: formatDistance(stats.avg_carry_est, unitSystem, 0),
-    max_carry: formatDistance(longestCarry, unitSystem, 0),
+    avg_carry: carries.length > 0 ? formatDistance(stats.avg_carry_est, unitSystem, 0) : NO_VALUE,
+    max_carry: carries.length > 0 ? formatDistance(Math.max(...carries), unitSystem, 0) : NO_VALUE,
   };
 }
 
@@ -53,7 +53,10 @@ export function buildLeaderboard(profiles: Profile[], shots: Shot[], unitSystem:
 
   const bestByColumn = {} as Record<LeaderboardColumn, number>;
   for (const column of LEADERBOARD_COLUMNS) {
-    const values = rows.filter((row) => row.shotCount > 0).map((row) => Number(row.texts[column]));
+    const values = rows
+      .filter((row) => row.shotCount > 0)
+      .map((row) => Number(row.texts[column]))
+      .filter(Number.isFinite);
     bestByColumn[column] = values.length > 0 ? Math.max(...values) : Number.NaN;
   }
 

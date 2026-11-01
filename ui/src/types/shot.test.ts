@@ -6,6 +6,8 @@ import {
   filterShotsByProfile,
   excludeShotsByProfile,
   getDisplayCarryYards,
+  isPuttShot,
+  statsCarryYards,
 } from './shot';
 
 describe('getDisplayCarryYards', () => {
@@ -25,10 +27,44 @@ describe('computeStats', () => {
       estimated_carry_yards: estimate,
     }) as Shot;
 
+  const putt = (rollFt: number): Shot => ({ ...carryShot(0, 8), club: 'putter', roll_distance_ft: rollFt }) as Shot;
+
   it('averages the carry Live shows, committed carry first', () => {
     const stats = computeStats([carryShot(143, 119), carryShot(null, 151)]);
 
     expect(stats.avg_carry_est).toBe(147);
+  });
+
+  it('leaves putts out of the carry average and averages their roll instead', () => {
+    const stats = computeStats([carryShot(143, 119), putt(10), putt(20)]);
+
+    expect(stats.avg_carry_est).toBe(143);
+    expect(stats.avg_roll_ft).toBe(15);
+    expect(stats.shot_count).toBe(3);
+  });
+
+  it('reports no carry and only a roll for a putting-only set', () => {
+    const stats = computeStats([putt(12)]);
+
+    expect(stats.avg_carry_est).toBe(0);
+    expect(stats.avg_roll_ft).toBe(12);
+    expect(computeStats([carryShot(143, 119)]).avg_roll_ft).toBeNull();
+  });
+});
+
+describe('isPuttShot', () => {
+  it('is true only for shots the server gave a roll', () => {
+    expect(isPuttShot({ roll_distance_ft: 11.1 } as Shot)).toBe(true);
+    expect(isPuttShot({ roll_distance_ft: 0 } as Shot)).toBe(true);
+    expect(isPuttShot({ roll_distance_ft: null } as Shot)).toBe(false);
+    expect(isPuttShot({} as Shot)).toBe(false);
+  });
+
+  it('drops putts from the carries behind carry stats', () => {
+    const drive = { carry_spin_adjusted: 250, estimated_carry_yards: 240 } as Shot;
+    const putted = { carry_spin_adjusted: 0, estimated_carry_yards: 8, roll_distance_ft: 9 } as Shot;
+
+    expect(statsCarryYards([drive, putted])).toEqual([250]);
   });
 });
 

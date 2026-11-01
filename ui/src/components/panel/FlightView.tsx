@@ -1,9 +1,16 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import type { Shot, ShotTrajectory } from '../../types/shot';
-import { getDisplayCarryYards } from '../../types/shot';
+import { getDisplayCarryYards, isPuttShot } from '../../types/shot';
 import { useI18n } from '../../i18n/useI18n';
 import type { UnitSystem } from '../../utils/units';
-import { convertHeightFromFeet, formatDistance, getDistanceUnit, getHeightUnit } from '../../utils/units';
+import {
+  convertHeightFromFeet,
+  formatDistance,
+  formatRollDistance,
+  getDistanceUnit,
+  getHeightUnit,
+  getRollDistanceUnit,
+} from '../../utils/units';
 import { MetricCard } from '../ui/MetricCard';
 import {
   apexPoint,
@@ -262,6 +269,20 @@ export function FlightView({ shot, earlierShots, animate, unitSystem }: FlightVi
     [earlierShots]
   );
   const trajectory = shot.trajectory && shot.trajectory.points.length >= 2 ? shot.trajectory : null;
+
+  if (isPuttShot(shot)) {
+    return (
+      <div className="flight-view flight-view--empty">
+        <span className="panel__empty-title">{t('flight.putt')}</span>
+        <span className="panel__empty-detail">
+          {t('flight.puttDetail', {
+            distance: formatRollDistance(shot.roll_distance_ft, unitSystem),
+            unit: getRollDistanceUnit(unitSystem),
+          })}
+        </span>
+      </div>
+    );
+  }
 
   if (!trajectory) {
     return (

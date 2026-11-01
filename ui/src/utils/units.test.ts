@@ -5,14 +5,23 @@ import {
   convertSpeedFromMph,
   formatCarryRange,
   formatDistance,
+  formatRollDistance,
   formatSpeed,
   getDistanceUnit,
   getHeightUnit,
+  getRollDistanceUnit,
   getSpeedUnit,
   getUnitsLabel,
 } from './units';
 
 describe('units helpers', () => {
+  it('shows putt roll in whole feet, or meters to a tenth', () => {
+    expect(formatRollDistance(11.06, 'imperial')).toBe('11');
+    expect(getRollDistanceUnit('imperial')).toBe('ft');
+    expect(formatRollDistance(11.06, 'metric')).toBe('3.4');
+    expect(getRollDistanceUnit('metric')).toBe('m');
+  });
+
   it('preserves imperial speed values', () => {
     expect(convertSpeedFromMph(150, 'imperial')).toBe(150);
     expect(formatSpeed(150, 'imperial', 1)).toBe('150.0');

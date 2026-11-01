@@ -52,6 +52,7 @@ export const fr: Messages = {
 
   'metric.ballSpeed': 'Vit. balle',
   'metric.carry': 'Carry',
+  'metric.roll': 'Roulé',
   'metric.clubSpeed': 'Vit. club',
   'metric.smash': 'Smash',
   'metric.vLaunch': 'Lancement V.',
@@ -80,6 +81,8 @@ export const fr: Messages = {
   'flight.hangTime': 'Temps de vol',
   'flight.unavailable': 'Pas de vol pour ce coup',
   'flight.unavailableDetail': 'Le vol nécessite un angle de lancement et le modèle balistique',
+  'flight.putt': 'Pas de vol pour un putt',
+  'flight.puttDetail': 'La balle a roulé {distance} {unit} sur le green',
   'flight.chartLabel': 'Vue latérale du vol : carry {carry} {distanceUnit}, apogée {apex} {heightUnit}',
 
   'stats.filterByClub': 'Filtrer par club',
@@ -90,6 +93,7 @@ export const fr: Messages = {
   'stats.avgBall': 'Moy. balle',
   'stats.maxBall': 'Max balle',
   'stats.avgCarry': 'Moy. carry',
+  'stats.avgRoll': 'Moy. roulé',
   'stats.avgClub': 'Moy. club',
   'stats.avgSmash': 'Moy. smash',
   'stats.last': 'Dernier',

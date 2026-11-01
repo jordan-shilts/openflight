@@ -1,9 +1,16 @@
 import { useEffect, useState } from 'react';
 import type { CameraCaptureSettings } from '../stores/useCameraStore';
 import type { Shot } from '../types/shot';
-import { computeSwingSpeedStats, getSwingSpeedMph, isSwingSpeedShot } from '../types/shot';
+import { computeSwingSpeedStats, getSwingSpeedMph, isPuttShot, isSwingSpeedShot } from '../types/shot';
 import { useUnitPreference } from '../state/useUnitPreference';
-import { formatDistance, formatSpeed, getDistanceUnit, getSpeedUnit } from '../utils/units';
+import {
+  formatDistance,
+  formatRollDistance,
+  formatSpeed,
+  getDistanceUnit,
+  getRollDistanceUnit,
+  getSpeedUnit,
+} from '../utils/units';
 import { getServerOrigin } from '../utils/serverOrigin';
 import { MetricCard } from './ui/MetricCard';
 import { getHtmlLang, type MessageKey } from '../i18n';
@@ -76,12 +83,18 @@ function buildMetrics(shot: Shot | null, unitSystem: 'imperial' | 'metric', t: T
       value: formatSpeed(shot.ball_speed_mph, unitSystem, 1),
       unit: getSpeedUnit(unitSystem),
     },
-    {
-      label: t('metric.carry'),
-      value: formatDistance(carryYards, unitSystem, 0),
-      unit: getDistanceUnit(unitSystem),
-      detail: shot.carry_spin_adjusted ? t('metric.spinAdjusted') : undefined,
-    },
+    isPuttShot(shot)
+      ? {
+          label: t('metric.roll'),
+          value: formatRollDistance(shot.roll_distance_ft, unitSystem),
+          unit: getRollDistanceUnit(unitSystem),
+        }
+      : {
+          label: t('metric.carry'),
+          value: formatDistance(carryYards, unitSystem, 0),
+          unit: getDistanceUnit(unitSystem),
+          detail: shot.carry_spin_adjusted ? t('metric.spinAdjusted') : undefined,
+        },
     {
       label: t('display.clubSpeed'),
       value: shot.club_speed_mph === null ? '--' : formatSpeed(shot.club_speed_mph, unitSystem, 1),
@@ -277,11 +290,17 @@ export function DisplayMode({ connected, captureSettings, latestShot, shots }: D
                 {formatSpeed(isSwingSpeedShot(shot) ? getSwingSpeedMph(shot) : shot.ball_speed_mph, unitSystem, 0)}{' '}
                 {getSpeedUnit(unitSystem)}
               </span>
-              {!isSwingSpeedShot(shot) && (
+              {isPuttShot(shot) ? (
                 <span className="display-shot-chip__stat">
-                  {formatDistance(shot.carry_spin_adjusted ?? shot.estimated_carry_yards, unitSystem, 0)}{' '}
-                  {getDistanceUnit(unitSystem)}
+                  {formatRollDistance(shot.roll_distance_ft, unitSystem)} {getRollDistanceUnit(unitSystem)}
                 </span>
+              ) : (
+                !isSwingSpeedShot(shot) && (
+                  <span className="display-shot-chip__stat">
+                    {formatDistance(shot.carry_spin_adjusted ?? shot.estimated_carry_yards, unitSystem, 0)}{' '}
+                    {getDistanceUnit(unitSystem)}
+                  </span>
+                )
               )}
             </div>
           ))
