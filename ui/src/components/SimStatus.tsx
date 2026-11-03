@@ -23,8 +23,15 @@ function severity(state: SimStatusData['state']): 'ok' | 'warn' | 'error' | 'off
   }
 }
 
+// What the connector is connected to: the simulator's own name when it reported one
+// (Open-Birdie speaks the GSPro protocol but isn't GSPro), else the protocol's sim.
+function displayName(s: SimStatusData): string {
+  return s.peer || DISPLAY_NAMES[s.target] || s.target;
+}
+
 function pillTitle(s: SimStatusData): string {
-  const where = s.host ? `${s.host}:${s.port ?? ''}` : '';
+  const protocol = s.peer ? `${s.peer} via ${DISPLAY_NAMES[s.target] ?? s.target} protocol` : '';
+  const where = [protocol, s.host ? `${s.host}:${s.port ?? ''}` : ''].filter(Boolean).join(' · ');
   if (s.state === 'reconnecting' && s.next_retry_in_s) {
     return `${where} — retry in ${s.next_retry_in_s}s (attempt ${s.attempt ?? ''})`.trim();
   }
@@ -49,7 +56,7 @@ export function SimStatus({ statuses }: SimStatusProps) {
       {entries.map((s) => (
         <div key={s.target} className={`sim-status__pill sim-status__pill--${severity(s.state)}`} title={pillTitle(s)}>
           <span className="sim-status__dot" />
-          <span className="sim-status__name">{DISPLAY_NAMES[s.target] ?? s.target}</span>
+          <span className="sim-status__name">{displayName(s)}</span>
           <span className="sim-status__state">{s.state}</span>
         </div>
       ))}

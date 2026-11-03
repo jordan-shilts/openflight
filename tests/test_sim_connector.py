@@ -159,3 +159,24 @@ def test_build_connector_partee_uses_shared_codec_named_partee():
 def test_build_connector_unknown_type_raises():
     with pytest.raises(ValueError):
         build_connector(ConnectorConfig(type="nope", port=1))
+
+
+def test_connector_reports_the_simulators_own_name_in_status(mock_sim):
+    """Open-Birdie speaks GSPro's protocol: the status says Open-Birdie, not GSPro."""
+    statuses = []
+    inbound = []
+    c = SimConnector(GSProCodec(), mock_sim.host, mock_sim.port,
+                     on_status=lambda name, evt: statuses.append(evt),
+                     on_inbound=lambda name, evt: inbound.append(evt))
+    mock_sim.queue_reply({"Code": 201, "Message": "GSPro Player Information", "Player": {"Club": "I7"}, "Simulator": "Open-Birdie"})
+    c.start()
+    try:
+        deadline = time.time() + 2.0
+        while time.time() < deadline and c.peer != "Open-Birdie":
+            time.sleep(0.05)
+        assert c.peer == "Open-Birdie"
+        assert any(evt.peer == "Open-Birdie" and evt.state == ConnectionState.CONNECTED for evt in statuses)
+        assert all(type(evt).__name__ != "PeerInfo" for evt in inbound), "handled by the transport, not passed on"
+        assert any(isinstance(evt, PlayerUpdate) for evt in inbound)
+    finally:
+        c.stop()

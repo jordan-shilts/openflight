@@ -76,7 +76,7 @@ export function MenuSheet({ onClose, onShutdown }: MenuSheetProps) {
         <section className="menu-sheet__section">
           <span className="menu-sheet__section-title">{t('menu.system')}</span>
           {Object.keys(simStatuses).length > 0 ? (
-            <div className="menu-sheet__status-row">
+            <div className="menu-sheet__status-row menu-sheet__status-row--stacked">
               <span className="menu-sheet__status-label">{t('menu.simulators')}</span>
               <SimStatus statuses={simStatuses} />
             </div>

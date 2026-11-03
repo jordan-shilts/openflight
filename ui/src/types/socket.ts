@@ -15,6 +15,8 @@ export interface SimStatus {
   message?: string;
   attempt?: number;
   next_retry_in_s?: number;
+  /** The simulator's own name when it reports one, e.g. "Open-Birdie" on the GSPro protocol. */
+  peer?: string;
 }
 
 export interface SimShotInfo {

@@ -56,6 +56,10 @@ class GSProResponse:
     Code: int
     Message: str = ""
     Player: Optional[dict] = None
+    # Not part of the GSPro spec: a simulator that speaks the protocol without being
+    # GSPro (Open-Birdie, say) can name itself here, so the UI shows what it is
+    # actually connected to. GSPro itself never sends it.
+    Simulator: Optional[str] = None
 
 
 def serialize_payload(payload: ShotPayload) -> bytes:
@@ -85,8 +89,11 @@ def parse_response(raw: bytes) -> GSProResponse:
         obj = json.loads(raw.decode("utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
         raise ValueError(f"Malformed GSPro response: {e}") from e
+    simulator = obj.get("Simulator")
+    simulator = simulator.strip()[:40] if isinstance(simulator, str) else ""
     return GSProResponse(
         Code=int(obj.get("Code", 0)),
         Message=str(obj.get("Message", "")),
         Player=obj.get("Player"),
+        Simulator=simulator or None,
     )

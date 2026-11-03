@@ -2137,6 +2137,7 @@ def _emit_sim_snapshot() -> None:
                 "state": connector.state.value,
                 "host": connector.host,
                 "port": connector.port,
+                "peer": getattr(connector, "peer", ""),
             },
         )
 
@@ -2679,6 +2680,7 @@ def _sim_on_status(target: str, event) -> None:
             "attempt": event.attempt,
             "next_retry_in_s": event.next_retry_in_s,
             "message": event.message,
+            "peer": event.peer,
         },
     )
     sl = get_session_logger()

@@ -22,6 +22,16 @@ describe('SimStatus', () => {
     expect(html).toContain('sim-status__pill--warn'); // reconnecting
   });
 
+  it('names the simulator that answered, not the protocol it speaks', () => {
+    const statuses: Record<string, SimStatusData> = {
+      gspro: { target: 'gspro', state: 'connected', host: '192.168.1.20', port: 921, peer: 'Open-Birdie' },
+    };
+    const html = renderToString(<SimStatus statuses={statuses} />);
+    expect(html).toContain('>Open-Birdie<');
+    expect(html).not.toContain('>GSPro<');
+    expect(html).toContain('Open-Birdie via GSPro protocol'); // the tooltip keeps the protocol
+  });
+
   it('marks error state with the error severity class', () => {
     const statuses: Record<string, SimStatusData> = {
       gspro: { target: 'gspro', state: 'error', message: 'Connection refused' },

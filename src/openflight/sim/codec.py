@@ -71,6 +71,11 @@ class SimConnector:
     def state(self):
         return self._client.state
 
+    @property
+    def peer(self) -> str:
+        """The simulator's own name if it reported one (e.g. "Open-Birdie"), else ""."""
+        return self._client.peer
+
     def send_shot(self, resolved: ResolvedShot) -> None:
         """Serialize and send a resolved shot. Raises OSError if the socket fails."""
         self._client.send_raw(self.codec.build_shot(resolved))

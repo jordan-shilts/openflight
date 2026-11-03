@@ -19,6 +19,7 @@ from openflight.gspro.messages import (
 from openflight.gspro.state import gspro_code_to_club
 from openflight.sim.types import (
     InboundEvent,
+    PeerInfo,
     PlayerUpdate,
     ResolvedShot,
     ShotAck,
@@ -87,20 +88,22 @@ class GSProCodec:
 
     def parse_inbound(self, frame: bytes) -> List[InboundEvent]:
         resp = parse_response(frame)  # raises ValueError on malformed JSON
+        # a GSPro-compatible sim that names itself (e.g. Open-Birdie)
+        events: List[InboundEvent] = [PeerInfo(name=resp.Simulator)] if resp.Simulator else []
         if resp.Code == 201 and resp.Player:
-            return [
+            events.append(
                 PlayerUpdate(
                     handed=str(resp.Player["Handed"]) if "Handed" in resp.Player else None,
                     club=gspro_code_to_club(str(resp.Player["Club"]))
                     if "Club" in resp.Player
                     else None,
                 )
-            ]
-        if resp.Code >= 500:
-            return [SimError(message=resp.Message)]
-        if resp.Code == 200:
-            return [ShotAck(ok=True, message=resp.Message)]
-        return []
+            )
+        elif resp.Code >= 500:
+            events.append(SimError(message=resp.Message))
+        elif resp.Code == 200:
+            events.append(ShotAck(ok=True, message=resp.Message))
+        return events
 
     def heartbeat_bytes(self) -> Optional[bytes]:
         return build_heartbeat(self.device_id, self.units, shot_number=0)

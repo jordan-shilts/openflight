@@ -112,3 +112,19 @@ def test_name_defaults_to_gspro_and_is_configurable():
     assert GSProCodec().name == "gspro"
     # OGS reaches this same OpenConnect codec under its own target name.
     assert GSProCodec(name="opengolfsim").name == "opengolfsim"
+
+
+def test_parse_inbound_reports_a_named_peer_before_the_event():
+    from openflight.sim.types import PeerInfo
+
+    events = GSProCodec().parse_inbound(
+        json.dumps({"Code": 200, "Message": "Shot received successfully", "Simulator": "Open-Birdie"}).encode()
+    )
+    assert isinstance(events[0], PeerInfo) and events[0].name == "Open-Birdie"
+    assert isinstance(events[1], ShotAck)
+    player = GSProCodec().parse_inbound(
+        json.dumps({"Code": 201, "Message": "GSPro Player Information", "Player": {"Club": "DR"}, "Simulator": "Open-Birdie"}).encode()
+    )
+    assert [type(e).__name__ for e in player] == ["PeerInfo", "PlayerUpdate"]
+    plain = GSProCodec().parse_inbound(json.dumps({"Code": 200, "Message": "ok"}).encode())
+    assert not any(isinstance(e, PeerInfo) for e in plain), "real GSPro: no peer name"

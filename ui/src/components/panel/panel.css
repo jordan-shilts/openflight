@@ -1486,6 +1486,13 @@
   min-height: 30px;
 }
 
+/* label above, full-width pills below: a sim's name and state never run off the sheet */
+.menu-sheet__status-row--stacked {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-xs);
+}
+
 .menu-sheet__status-label {
   flex: 1;
   font-weight: 500;
