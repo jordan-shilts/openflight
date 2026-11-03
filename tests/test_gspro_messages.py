@@ -82,3 +82,15 @@ def test_parse_response_code_5xx_error():
 def test_parse_response_invalid_json_raises():
     with pytest.raises(ValueError):
         parse_response(b"not json")
+
+
+def test_parse_response_reads_a_simulators_own_name():
+    """A GSPro-compatible sim that isn't GSPro (Open-Birdie) names itself in replies."""
+    from openflight.gspro.messages import parse_response
+
+    resp = parse_response(b'{"Code":200,"Message":"Shot received successfully","Simulator":"Open-Birdie"}')
+    assert resp.Simulator == "Open-Birdie"
+    assert parse_response(b'{"Code":200,"Message":"ok"}').Simulator is None, "GSPro never sends it"
+    assert parse_response(b'{"Code":200,"Simulator":42}').Simulator is None
+    assert parse_response(b'{"Code":200,"Simulator":"   "}').Simulator is None
+    assert len(parse_response(('{"Code":200,"Simulator":"%s"}' % ("x" * 100)).encode()).Simulator) == 40

@@ -57,6 +57,9 @@ class StatusEvent:
     attempt: int = 0
     next_retry_in_s: float = 0.0
     message: str = ""
+    # The simulator's own name when it reports one (PeerInfo), e.g. "Open-Birdie"
+    # behind a GSPro-protocol connector; "" when it hasn't (GSPro itself).
+    peer: str = ""
 
 
 # --- inbound events (simulator → OpenFlight), normalized across protocols ----
@@ -86,7 +89,15 @@ class SimError:
     message: str = ""
 
 
-InboundEvent = Union[PlayerUpdate, ShotAck, SimError]
+@dataclass
+class PeerInfo:
+    """The sim named itself (a protocol-compatible sim that is not the protocol's
+    namesake, like Open-Birdie speaking GSPro Open Connect)."""
+
+    name: str = ""
+
+
+InboundEvent = Union[PlayerUpdate, ShotAck, SimError, PeerInfo]
 
 
 # --- resolved shot (post-fallback, pre-serialization) ------------------------

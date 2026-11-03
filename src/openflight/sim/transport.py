@@ -15,6 +15,7 @@ from typing import Callable, List, Optional, Protocol, Tuple
 from openflight.sim.types import (
     ConnectionState,
     InboundEvent,
+    PeerInfo,
     StatusEvent,
 )
 
@@ -114,6 +115,7 @@ class TcpSimClient:
         self._backoff = backoff_seconds
         self._state = ConnectionState.DISABLED
         self._state_lock = threading.Lock()
+        self._peer = ""  # the sim's own name, once it has said (PeerInfo)
         self._sock: Optional[socket.socket] = None
         self._sock_lock = threading.Lock()
         self._stop_event = threading.Event()
@@ -128,6 +130,11 @@ class TcpSimClient:
     def state(self) -> ConnectionState:
         with self._state_lock:
             return self._state
+
+    @property
+    def peer(self) -> str:
+        """The simulator's own name if it reported one (e.g. "Open-Birdie"), else ""."""
+        return self._peer
 
     def is_connected(self) -> bool:
         return self.state == ConnectionState.CONNECTED
@@ -212,6 +219,7 @@ class TcpSimClient:
                 return
             self._state = new_state
         if self.on_status is not None:
+            status_kwargs.setdefault("peer", self._peer)
             self.on_status(
                 StatusEvent(
                     state=new_state,
@@ -272,6 +280,7 @@ class TcpSimClient:
             if self._try_connect():
                 attempt = 0
                 ever_connected = True
+                self._peer = ""  # whoever answers this connection names itself afresh
                 self._set_state(ConnectionState.CONNECTED)
                 reconnect_reason = self._recv_loop()
                 self._close_socket()
@@ -337,6 +346,12 @@ class TcpSimClient:
                     logger.warning("[%s] dropping malformed frame: %s", self._name, e)
                     continue
                 for event in events:
+                    if isinstance(event, PeerInfo):
+                        # the sim named itself: show that instead of the protocol name
+                        if event.name != self._peer:
+                            self._peer = event.name
+                            self._set_state(self.state, peer=event.name)
+                        continue
                     self._dispatch(event)
             # Drained all complete frames; if the incomplete remainder has grown
             # past the cap, the peer never closed a frame — drop it and resync.

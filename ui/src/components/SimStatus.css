@@ -1,13 +1,21 @@
 /* Simulator connector status pills */
 .sim-status {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-xs);
+  min-width: 0;
+  max-width: 100%;
 }
 
 .sim-status__pill {
   display: flex;
+  /* in a narrow sheet the state drops under the name instead of both truncating */
+  flex-wrap: wrap;
+  row-gap: 2px;
   align-items: center;
+  min-width: 0;
+  max-width: 100%;
   gap: var(--space-xs);
   padding: var(--space-xs) var(--space-sm);
   border-radius: var(--radius);
@@ -24,6 +32,19 @@
 
 .sim-status__state {
   opacity: 0.75;
+}
+
+/* only a name too long for the whole pill ellipsizes; nothing runs past the panel */
+.sim-status__name,
+.sim-status__state {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sim-status__dot {
+  flex: none;
 }
 
 .sim-status__dot {
