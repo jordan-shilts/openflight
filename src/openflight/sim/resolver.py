@@ -16,6 +16,9 @@ from openflight.launch_monitor import (
 )
 from openflight.sim.types import IncompleteShotError, PlayerState, ResolvedShot
 
+# confidence tiers of the camera attack angle that are sent to a simulator
+SENDABLE_ATTACK_TIERS = ("high", "medium")
+
 # Temporary per-club spin model (rpm), used only when a measured spin is absent
 # or low-confidence. Slated for replacement by the shared ballistics spin model.
 SPIN_MODEL_RPM: Dict[ClubType, float] = {
@@ -135,6 +138,17 @@ def resolve_shot(shot: Shot, player_state: PlayerState) -> ResolvedShot:
         club_path = 0.0
         provenance["club_path"] = "estimated"
 
+    # The camera's fused attack angle is experimental: a simulator gets it only when
+    # its confidence tier is high or medium (low and withheld stay home), so a sim
+    # that shows club delivery (Open-Birdie's club card) can show attack and loft.
+    attack = shot.experimental_fused_attack_angle_deg
+    if attack is not None and shot.experimental_fused_attack_angle_confidence in SENDABLE_ATTACK_TIERS:
+        attack_angle = float(attack)
+        provenance["attack_angle"] = "measured"
+    else:
+        attack_angle = None
+        provenance["attack_angle"] = "estimated"
+
     return ResolvedShot(
         shot_number=player_state.next_shot_number(),
         ball_speed_mph=float(shot.ball_speed_mph),
@@ -148,5 +162,6 @@ def resolve_shot(shot: Shot, player_state: PlayerState) -> ResolvedShot:
         club_path_deg=club_path,
         club=shot.club,
         club_speed_mph=club_speed,
+        attack_angle_deg=attack_angle,
         provenance=provenance,
     )

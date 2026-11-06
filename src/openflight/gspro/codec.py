@@ -38,6 +38,7 @@ _GSPRO_FIELDS = [
     "carry",
     "club_speed",
     "club_path",
+    "attack_angle",
 ]
 
 
@@ -57,6 +58,7 @@ class GSProCodec:
 
     def build_shot(self, resolved: ResolvedShot) -> bytes:
         has_club_speed = resolved.club_speed_mph is not None
+        has_attack = resolved.attack_angle_deg is not None
         payload = ShotPayload(
             DeviceID=self.device_id,
             Units=self.units,
@@ -75,10 +77,11 @@ class GSProCodec:
             ClubData=ClubData(
                 Speed=round(resolved.club_speed_mph, 1) if has_club_speed else 0.0,
                 Path=round(resolved.club_path_deg, 1),
+                AngleOfAttack=round(resolved.attack_angle_deg, 1) if has_attack else 0.0,
             ),
             ShotDataOptions=ShotDataOptions(
                 ContainsBallData=True,
-                ContainsClubData=has_club_speed,
+                ContainsClubData=has_club_speed or has_attack,
                 LaunchMonitorIsReady=True,
                 LaunchMonitorBallDetected=True,
                 IsHeartBeat=False,

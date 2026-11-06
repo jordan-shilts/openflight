@@ -45,6 +45,21 @@ def test_build_shot_no_club_speed_drops_club_flag():
     assert p["ShotDataOptions"]["ContainsClubData"] is False
 
 
+def test_build_shot_sends_attack_angle_when_resolved():
+    p = _build(GSProCodec(), _resolved(attack_angle_deg=-2.94))
+    assert p["ClubData"]["AngleOfAttack"] == -2.9
+    assert p["ShotDataOptions"]["ContainsClubData"] is True
+    # an attack angle alone (no club speed) still carries club data
+    p = _build(GSProCodec(), _resolved(club_speed_mph=None, attack_angle_deg=1.2))
+    assert p["ClubData"]["AngleOfAttack"] == 1.2
+    assert p["ShotDataOptions"]["ContainsClubData"] is True
+
+
+def test_build_shot_without_attack_angle_leaves_it_zero():
+    p = _build(GSProCodec(), _resolved())
+    assert p["ClubData"]["AngleOfAttack"] == 0.0
+
+
 def test_build_shot_options_flags():
     opts = _build(GSProCodec(), _resolved())["ShotDataOptions"]
     assert opts["ContainsBallData"] is True
@@ -106,6 +121,7 @@ def test_parse_unknown_code_yields_nothing():
 def test_fields_for_target_lists_logical_fields():
     fields = GSProCodec().fields_for_target()
     assert "ball_speed" in fields and "carry" in fields and "club_path" in fields
+    assert "attack_angle" in fields
 
 
 def test_name_defaults_to_gspro_and_is_configurable():
