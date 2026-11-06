@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Attack angle to the simulator.** A shot sent over GSPro Open Connect now
+  carries the camera's experimental attack angle (`ClubData.AngleOfAttack`)
+  when its confidence tier is high or medium; low and withheld estimates stay
+  home. A simulator that shows club delivery (Open-Birdie's club card) can then
+  show attack angle, dynamic loft and spin loft. The sim badges label it AoA.
 - **Accuracy and reliability report.** `openflight-accuracy report` reads
   session logs and reports, per session, how often each stage produced a
   measurement, whether the IWR6843 and OPS243 agree, and which corrections were

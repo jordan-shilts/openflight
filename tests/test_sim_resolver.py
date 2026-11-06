@@ -104,6 +104,26 @@ def test_missing_club_path_falls_back_to_zero():
     assert r.provenance["club_path"] == "estimated"
 
 
+@pytest.mark.parametrize("tier,sent", [("high", True), ("medium", True), ("low", False), ("withheld", False), (None, False)])
+def test_camera_attack_angle_is_sent_only_when_confident(tier, sent):
+    shot = _shot(spin_rpm=2500.0, spin_confidence=0.9)
+    shot.experimental_fused_attack_angle_deg = -3.4
+    shot.experimental_fused_attack_angle_confidence = tier
+    r = resolve_shot(shot, PlayerState())
+    if sent:
+        assert r.attack_angle_deg == -3.4
+        assert r.provenance["attack_angle"] == "measured"
+    else:
+        assert r.attack_angle_deg is None
+        assert r.provenance["attack_angle"] == "estimated"
+    assert r.as_values()["attack_angle"] == r.attack_angle_deg
+
+
+def test_no_camera_attack_angle_is_none():
+    r = resolve_shot(_shot(spin_rpm=2500.0, spin_confidence=0.9), PlayerState())
+    assert r.attack_angle_deg is None
+
+
 def test_carry_provenance_tracks_launch_angle():
     measured = resolve_shot(_shot(launch_angle_vertical=12.0), PlayerState())
     assert measured.provenance["carry"] == "measured"

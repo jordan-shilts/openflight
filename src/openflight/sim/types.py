@@ -124,6 +124,9 @@ class ResolvedShot:
     club_path_deg: float
     club: ClubType
     club_speed_mph: Optional[float] = None  # None => no club-speed data
+    # The camera's experimental attack angle, only when its confidence tier is high
+    # or medium (resolver.SENDABLE_ATTACK_TIERS); None => not sent.
+    attack_angle_deg: Optional[float] = None
     provenance: Dict[str, str] = field(default_factory=dict)
 
     def as_values(self) -> Dict[str, Optional[float]]:
@@ -139,6 +142,7 @@ class ResolvedShot:
             "carry": self.carry_yards,
             "club_speed": self.club_speed_mph,
             "club_path": self.club_path_deg,
+            "attack_angle": self.attack_angle_deg,
         }
 
 

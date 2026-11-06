@@ -19,6 +19,7 @@ const FIELD_LABELS: Record<string, string> = {
   carry: 'Carry',
   club_speed: 'Club',
   club_path: 'Path',
+  attack_angle: 'AoA',
 };
 
 function formatValue(value: number | null): string {
