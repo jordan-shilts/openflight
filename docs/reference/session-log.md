@@ -89,7 +89,9 @@ jq -r 'select(.type=="trigger_event" and .accepted==false)' session_*.jsonl
 ```
 
 For LogQL queries against shipped logs, see
-[observability](../using/observability.md#querying-session-data).
+[observability](../using/observability.md#querying-session-data). For a
+summary of reliability, sensor consistency and drift across sessions, run the
+[accuracy report](../using/accuracy.md).
 
 ## Related
 

@@ -71,6 +71,7 @@ nav = [
     "using/cloud-sync.md",
     "using/battery.md",
     "using/observability.md",
+    "using/accuracy.md",
     "ios-ble.md",
   ] },
 
