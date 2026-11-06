@@ -70,6 +70,7 @@ ble = [
 [project.scripts]
 openflight-server = "openflight.server:main"
 openflight-cloud = "openflight.cloud.cli:main"
+openflight-accuracy = "openflight.accuracy.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/open-flight/openflight"

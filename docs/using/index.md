@@ -27,6 +27,10 @@ Everything after the hardware works.
 
     Ship session logs to Grafana Cloud and query them with LogQL.
 
+- :material-check-decagram-outline: **[Accuracy & reliability report](accuracy.md)**
+
+    Measurement coverage, sensor consistency, and drift between sessions.
+
 - :material-battery-charging: **[Battery monitoring](battery.md)**
 
     Provider architecture, indicator states, and warning dialogs.

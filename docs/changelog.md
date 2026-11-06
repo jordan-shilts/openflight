@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Accuracy and reliability report.** `openflight-accuracy report` reads
+  session logs and reports, per session, how often each stage produced a
+  measurement, whether the IWR6843 and OPS243 agree, and which corrections were
+  active. It compares each session with the ones before it (Fisher's exact and
+  Mann-Whitney tests, p < 0.001 plus a minimum change) to flag drift. It needs
+  no reference launch monitor and changes no live numbers; see
+  [Accuracy & reliability report](using/accuracy.md).
 - **Optional low-battery shutdown for UPS builds.**
   `scripts/battery/install_battery_guard.sh` installs a systemd service that,
   when external power is offline and the battery is at or below 10% or 3.40 V
