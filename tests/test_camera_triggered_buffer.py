@@ -707,3 +707,49 @@ def test_vertical_crop_update_rejects_unsafe_or_unaligned_offsets(tmp_path, offs
 
     with pytest.raises(ValueError, match="vertical crop"):
         runtime.update_vertical_crop(offset)
+
+
+class _FakeRequest:
+    def __init__(self, timestamp_ns: int):
+        self.timestamp_ns = timestamp_ns
+
+    def get_metadata(self):
+        return {"SensorTimestamp": self.timestamp_ns, "ExposureTime": 500, "AnalogueGain": 2.0}
+
+    def make_array(self, _name):
+        return np.arange(32, dtype=np.uint8).reshape(4, 8)
+
+
+def test_frame_listener_sees_each_buffered_frame(tmp_path):
+    seen = []
+    runtime = CameraCaptureRuntime(
+        output_dir=tmp_path,
+        settings=CameraCaptureSettings(width=8, height=4, fps=100.0, pre_ms=50.0, post_ms=20.0),
+        use_gpio_trigger=False,
+        frame_listener=seen.append,
+    )
+
+    runtime._on_frame(_FakeRequest(1_000))
+    runtime._on_frame(_FakeRequest(11_000))
+
+    assert [frame.sensor_timestamp_ns for frame in seen] == [1_000, 11_000]
+    assert seen[-1].image.shape == (4, 8)
+    assert seen[-1].exposure_us == 500
+    assert runtime._ring.latest_frame is seen[-1]
+
+
+def test_a_failing_frame_listener_does_not_lose_the_frame(tmp_path):
+    def broken(_frame):
+        raise RuntimeError("listener bug")
+
+    runtime = CameraCaptureRuntime(
+        output_dir=tmp_path,
+        settings=CameraCaptureSettings(width=8, height=4, fps=100.0),
+        use_gpio_trigger=False,
+        frame_listener=broken,
+    )
+
+    runtime._on_frame(_FakeRequest(1_000))
+
+    assert runtime._ring.latest_frame is not None
+    assert runtime._ring.latest_frame.sensor_timestamp_ns == 1_000
