@@ -230,7 +230,7 @@ def test_impossible_geometry_is_refused(argv):
 def radar_worker(tee_m):
     """A RadarWorker without a radar: only what measure_launch reads."""
     worker = object.__new__(recorder.RadarWorker)
-    worker.args = SimpleNamespace(tee_m=tee_m, club="7i", net_m=4.0)
+    worker.args = SimpleNamespace(tee_m=tee_m, club="7i", net_m=4.0, club_from=None)
     worker.calibration = "calibration"
     worker.tx_order = "normal"
     return worker
@@ -248,14 +248,14 @@ def test_launch_is_measured_with_the_radial_track_speed(monkeypatch):
     )
     capture = SimpleNamespace(raw=b"dump", sequence=3)
 
-    assert radar_worker(1.4).measure_launch(capture, measurement()) is result
+    assert radar_worker(1.4).measure_launch(capture, measurement(), "7-iron") is result
     assert calls == [
         (
             b"dump",
             "calibration",
             # The live path feeds LCMF the OPS243's radial speed; the range walk's
             # radial speed (not the cosine-corrected one) stands in for it.
-            {"ball_speed_mph": 99.0, "club": "7i", "net_range_m": 4.0, "tx_order": "normal"},
+            {"ball_speed_mph": 99.0, "club": "7-iron", "net_range_m": 4.0, "tx_order": "normal"},
         )
     ]
 
@@ -286,3 +286,51 @@ def test_a_launch_analysis_crash_costs_only_the_angle(monkeypatch, capsys):
 
     assert radar_worker(1.4).measure_launch(capture, measurement()) is None
     assert "launch analysis failed: bad dump" in capsys.readouterr().out
+
+
+def test_the_kiosk_club_is_read_from_its_api():
+    seen = {}
+
+    def opener(url, timeout):
+        seen.update(url=url, timeout=timeout)
+        return FakeResponse(b'{"club": "7-iron", "status": "current"}')
+
+    assert recorder.kiosk_club("http://127.0.0.1:8080/api/club", opener=opener) == "7-iron"
+    assert seen == {"url": "http://127.0.0.1:8080/api/club", "timeout": 2.0}
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [b"<html>", b"[]", b"{}", b'{"club": ""}', b'{"club": 7}', b'{"club": null}'],
+)
+def test_an_unreadable_kiosk_club_is_none(reply):
+    def opener(url, timeout):
+        return FakeResponse(reply)
+
+    assert recorder.kiosk_club("http://x/api/club", opener=opener) is None
+
+
+@pytest.mark.parametrize(
+    "error", [urllib.error.URLError("refused"), TimeoutError("slow"), OSError("down")]
+)
+def test_an_unreachable_kiosk_club_is_none(error):
+    def opener(url, timeout):
+        raise error
+
+    assert recorder.kiosk_club("http://x/api/club", opener=opener) is None
+
+
+def test_each_swing_uses_the_kiosk_club_and_falls_back_to_the_flag(monkeypatch):
+    worker = radar_worker(1.4)
+    worker.args.club_from = "http://127.0.0.1:8080/api/club"
+    replies = iter(["7-iron", None])
+    monkeypatch.setattr(recorder, "kiosk_club", lambda url: next(replies))
+
+    assert worker.current_club() == "7-iron"
+    assert worker.current_club() == "7i"  # kiosk unreadable: the --club flag
+
+
+def test_without_a_kiosk_url_the_flag_club_is_used(monkeypatch):
+    monkeypatch.setattr(recorder, "kiosk_club", lambda url: pytest.fail("must not call the kiosk"))
+
+    assert radar_worker(1.4).current_club() == "7i"

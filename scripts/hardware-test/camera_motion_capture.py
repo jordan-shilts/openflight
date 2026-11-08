@@ -105,7 +105,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     radar.add_argument("--radar-height-m", type=float, default=None)
     radar.add_argument("--ball-height-m", type=float, default=None)
     radar.add_argument("--tilt-deg", type=float, default=None, help="Radar mount tilt")
-    radar.add_argument("--club", default=None, help='Club in play, e.g. "7i" or "driver"')
+    radar.add_argument(
+        "--club", default=None, help='Club in play, e.g. "7-iron" (fallback for --club-from)'
+    )
+    radar.add_argument(
+        "--club-from",
+        default=None,
+        help="Kiosk club URL read on every swing, e.g. http://127.0.0.1:8080/api/club",
+    )
     radar.add_argument(
         "--post-to",
         default=None,
@@ -331,6 +338,16 @@ def shot_payload(measurement, *, launch=None) -> dict | None:
     return payload
 
 
+def kiosk_club(url: str, *, opener=urllib.request.urlopen) -> str | None:
+    """The club selected on the kiosk, or None when it can't be read."""
+    try:
+        with opener(url, timeout=2.0) as response:
+            club = json.loads(response.read() or b"{}").get("club")
+    except (urllib.error.URLError, OSError, ValueError, AttributeError):
+        return None
+    return club if isinstance(club, str) and club.strip() else None
+
+
 def post_shot(url: str, payload: dict, *, opener=urllib.request.urlopen) -> str:
     """Send one swing to the kiosk; return a short status for the log."""
     request = urllib.request.Request(
@@ -373,7 +390,15 @@ class RadarWorker(threading.Thread):
             if capture is not None:
                 self.handle(capture)
 
-    def measure_launch(self, capture, measurement):
+    def current_club(self) -> str | None:
+        """The kiosk's selected club when it can be read, else --club."""
+        if self.args.club_from:
+            club = kiosk_club(self.args.club_from)
+            if club is not None:
+                return club
+        return self.args.club
+
+    def measure_launch(self, capture, measurement, club=None):
         """LCMF-v1, the live kiosk's launch method, fed the radar's own ball speed.
 
         The live path feeds it the OPS243's radial speed; the range walk's
@@ -390,7 +415,7 @@ class RadarWorker(threading.Thread):
                 capture.raw,
                 self.calibration,
                 ball_speed_mph=measurement.ball_speed_mph,
-                club=self.args.club,
+                club=club,
                 net_range_m=self.args.net_m,
                 tx_order=self.tx_order,
             )
@@ -402,13 +427,14 @@ class RadarWorker(threading.Thread):
         """Print and log one capture's result."""
         from openflight.iwr6843.shot import process_dump  # pylint: disable=import-outside-toplevel
 
+        club = self.current_club()
         record = {
             "sequence": capture.sequence,
             "trigger_timestamp": capture.trigger_timestamp,
             "dump_s": round(capture.dump_duration_s, 2),
             "dump_path": str(capture.path) if capture.path else None,
             "tee_m": self.args.tee_m,
-            "club": self.args.club,
+            "club": club,
         }
         if not capture.valid:
             print(f"RADAR #{capture.sequence}: capture failed: {capture.error}")
@@ -418,7 +444,7 @@ class RadarWorker(threading.Thread):
                 measurement = process_dump(
                     capture.raw,
                     self.calibration,
-                    club=self.args.club,
+                    club=club,
                     net_range_m=self.args.net_m,
                     tx_order=self.tx_order,
                 )
@@ -426,9 +452,9 @@ class RadarWorker(threading.Thread):
                 print(f"RADAR #{capture.sequence}: analysis failed: {error}")
                 record["error"] = f"analysis: {error}"
             else:
-                launch = self.measure_launch(capture, measurement)
+                launch = self.measure_launch(capture, measurement, club)
                 line = radar_line(measurement, launch=launch, tee_known=self.args.tee_m is not None)
-                print(f"RADAR #{capture.sequence}: {line}")
+                print(f"RADAR #{capture.sequence} ({club or 'no club'}): {line}")
                 record.update(measurement.to_dict())
                 if launch is not None:
                     record["lcmf"] = launch.to_dict()
