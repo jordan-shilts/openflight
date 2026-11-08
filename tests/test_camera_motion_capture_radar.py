@@ -1,6 +1,9 @@
 """Camera-triggered TI radar capture in the camera-only swing recorder."""
 
 import importlib.util
+import io
+import json
+import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -68,6 +71,100 @@ def test_radar_options_default_to_the_wide_config_and_reference_calibration():
     assert args.iwr6843_config.name == "iwr6843_l3dump_wide_24f3ms_53bin_iq16.cfg"
     assert args.iwr6843_cal.name == "iwr6843_calibration_reference.json"
     assert args.tee_m is None
+
+
+def test_a_credible_ball_is_sent_as_its_corrected_speed():
+    assert recorder.shot_payload(measurement(), launch_trusted=False) == {"ball_speed_mph": 101.4}
+
+
+def test_launch_angle_is_sent_only_with_a_measured_tee_range():
+    assert recorder.shot_payload(measurement(), launch_trusted=True) == {
+        "ball_speed_mph": 101.4,
+        "launch_angle_vertical": 12.3,
+    }
+    assert recorder.shot_payload(measurement(angle=None), launch_trusted=True) == {
+        "ball_speed_mph": 101.4
+    }
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [{"found": False}, {"quality": "reject"}, {"low": True}],
+)
+def test_doubtful_readings_never_reach_the_screen(kwargs):
+    assert recorder.shot_payload(measurement(**kwargs), launch_trusted=True) is None
+
+
+class FakeResponse:
+    def __init__(self, body: bytes):
+        self.body = body
+
+    def read(self):
+        return self.body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def test_post_shot_sends_json_and_reports_the_shot_number():
+    sent = {}
+
+    def opener(request, timeout):
+        sent.update(
+            url=request.full_url,
+            method=request.get_method(),
+            body=json.loads(request.data),
+            content_type=request.get_header("Content-type"),
+            timeout=timeout,
+        )
+        return FakeResponse(b'{"shot_number": 7, "ball_speed_mph": 118.2}')
+
+    status = recorder.post_shot("http://127.0.0.1:8080/api/shots/measured", {"x": 1}, opener=opener)
+
+    assert status == "on screen as shot 7"
+    assert sent == {
+        "url": "http://127.0.0.1:8080/api/shots/measured",
+        "method": "POST",
+        "body": {"x": 1},
+        "content_type": "application/json",
+        "timeout": 3.0,
+    }
+
+
+def test_post_shot_reports_a_refusal_without_raising():
+    def opener(request, timeout):
+        raise urllib.error.HTTPError(
+            request.full_url, 409, "Conflict", {}, io.BytesIO(b'{"error": "only in --mock"}')
+        )
+
+    status = recorder.post_shot("http://127.0.0.1:8080/x", {}, opener=opener)
+
+    assert status.startswith("kiosk refused it (409")
+    assert "only in --mock" in status
+
+
+@pytest.mark.parametrize(
+    "error",
+    [urllib.error.URLError("connection refused"), TimeoutError("timed out"), OSError("down")],
+)
+def test_post_shot_reports_an_unreachable_kiosk_without_raising(error):
+    def opener(request, timeout):
+        raise error
+
+    assert recorder.post_shot("http://127.0.0.1:8080/x", {}, opener=opener).startswith(
+        "kiosk unreachable"
+    )
+
+
+def test_post_shot_survives_a_garbled_reply():
+    status = recorder.post_shot(
+        "http://127.0.0.1:8080/x", {}, opener=lambda request, timeout: FakeResponse(b"<html>")
+    )
+
+    assert status.startswith("kiosk reply unreadable")
 
 
 @pytest.mark.parametrize(

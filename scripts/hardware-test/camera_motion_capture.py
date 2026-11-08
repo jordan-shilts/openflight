@@ -25,6 +25,8 @@ import queue
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Callable
 
@@ -104,6 +106,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     radar.add_argument("--ball-height-m", type=float, default=None)
     radar.add_argument("--tilt-deg", type=float, default=None, help="Radar mount tilt")
     radar.add_argument("--club", default=None, help='Club in play, e.g. "7i" or "driver"')
+    radar.add_argument(
+        "--post-to",
+        default=None,
+        help="Kiosk measured-shot URL, e.g. http://127.0.0.1:8080/api/shots/measured",
+    )
     args = parser.parse_args(argv)
     for name in ("tee_m", "net_m", "radar_height_m"):
         value = getattr(args, name)
@@ -276,6 +283,41 @@ def radar_line(measurement, *, launch_trusted: bool) -> str:
     return ", ".join(parts)
 
 
+def shot_payload(measurement, *, launch_trusted: bool) -> dict | None:
+    """What the kiosk gets for one swing, or None without a credible ball."""
+    track = measurement.track
+    if not measurement.ball_found or track is None:
+        return None
+    if measurement.quality == "reject" or track.low_confidence:
+        return None
+    speed = measurement.ball_speed_corrected_mph or measurement.ball_speed_mph
+    payload = {"ball_speed_mph": round(speed, 1)}
+    angle = measurement.launch_angle_deg
+    if launch_trusted and angle is not None:
+        payload["launch_angle_vertical"] = round(angle, 1)
+    return payload
+
+
+def post_shot(url: str, payload: dict, *, opener=urllib.request.urlopen) -> str:
+    """Send one swing to the kiosk; return a short status for the log."""
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with opener(request, timeout=3.0) as response:
+            body = json.loads(response.read() or b"{}")
+    except urllib.error.HTTPError as error:
+        return f"kiosk refused it ({error.code}: {error.read()[:160].decode(errors='replace')})"
+    except (urllib.error.URLError, OSError) as error:
+        return f"kiosk unreachable ({error})"
+    except ValueError as error:
+        return f"kiosk reply unreadable ({error})"
+    return f"on screen as shot {body.get('shot_number')}"
+
+
 class RadarWorker(threading.Thread):
     """Analyze each TI dump with the radar-only pipeline as it arrives."""
 
@@ -326,9 +368,15 @@ class RadarWorker(threading.Thread):
                 print(f"RADAR #{capture.sequence}: analysis failed: {error}")
                 record["error"] = f"analysis: {error}"
             else:
-                line = radar_line(measurement, launch_trusted=self.args.tee_m is not None)
+                launch_trusted = self.args.tee_m is not None
+                line = radar_line(measurement, launch_trusted=launch_trusted)
                 print(f"RADAR #{capture.sequence}: {line}")
                 record.update(measurement.to_dict())
+                payload = shot_payload(measurement, launch_trusted=launch_trusted)
+                if self.args.post_to and payload is not None:
+                    status = post_shot(self.args.post_to, payload)
+                    print(f"RADAR #{capture.sequence}: {status}")
+                    record["kiosk"] = status
         with self.results_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, default=str) + "\n")
 
