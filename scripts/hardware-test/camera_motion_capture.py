@@ -266,35 +266,68 @@ class NoTriggerInput:
         """Nothing to release."""
 
 
-def radar_line(measurement, *, launch_trusted: bool) -> str:
-    """One line per swing; launch angle only when the tee range was measured."""
+MAX_POSTED_HORIZONTAL_DEG = 45.0  # the kiosk refuses a shot whose horizontal exceeds this
+
+
+def credible_ball(measurement) -> bool:
+    """A found, unrejected, confident ball track: the only swings worth showing."""
+    track = measurement.track
+    return bool(
+        measurement.ball_found
+        and track is not None
+        and measurement.quality != "reject"
+        and not track.low_confidence
+    )
+
+
+def ball_speed(measurement) -> float:
+    """Cosine-corrected ball speed when the geometry allows it, else radial."""
+    return measurement.ball_speed_corrected_mph or measurement.ball_speed_mph
+
+
+def radar_line(measurement, *, launch=None, tee_known: bool) -> str:
+    """One line per swing: ball speed, then LCMF-v1 launch or why there is none."""
     if not measurement.ball_found or measurement.track is None:
         return "no ball in the radar data"
     track = measurement.track
-    speed = measurement.ball_speed_corrected_mph or measurement.ball_speed_mph
-    parts = [f"ball {speed:.1f} mph", f"({track.n_inliers} points, quality {measurement.quality})"]
-    angle = measurement.launch_angle_deg
-    if angle is not None and launch_trusted:
-        parts.insert(1, f"launch {angle:.1f} deg")
-    elif angle is not None:
+    parts = [f"ball {ball_speed(measurement):.1f} mph"]
+    if launch is not None and launch.accepted:
+        side = (
+            "" if launch.horizontal_deg is None else f", {launch.horizontal_deg:+.1f} deg sideways"
+        )
+        parts.append(f"launch {launch.angle_deg:.1f} deg up{side}")
+    elif launch is not None:
+        parts.append(f"launch withheld ({launch.status})")
+    elif not tee_known:
         parts.append("launch needs --tee-m")
+    parts.append(f"({track.n_inliers} points, quality {measurement.quality})")
     if track.low_confidence:
         parts.append("LOW CONFIDENCE")
     return ", ".join(parts)
 
 
-def shot_payload(measurement, *, launch_trusted: bool) -> dict | None:
-    """What the kiosk gets for one swing, or None without a credible ball."""
-    track = measurement.track
-    if not measurement.ball_found or track is None:
+def shot_payload(measurement, *, launch=None) -> dict | None:
+    """What the kiosk gets for one swing, or None without a credible ball.
+
+    Launch angles come only from an accepted LCMF-v1 result, with the evidence
+    the kiosk derives its confidences from.
+    """
+    if not credible_ball(measurement):
         return None
-    if measurement.quality == "reject" or track.low_confidence:
-        return None
-    speed = measurement.ball_speed_corrected_mph or measurement.ball_speed_mph
-    payload = {"ball_speed_mph": round(speed, 1)}
-    angle = measurement.launch_angle_deg
-    if launch_trusted and angle is not None:
-        payload["launch_angle_vertical"] = round(angle, 1)
+    payload = {"ball_speed_mph": round(ball_speed(measurement), 1)}
+    if launch is None or not launch.accepted:
+        return payload
+    payload["launch_angle_vertical"] = round(launch.angle_deg, 2)
+    payload["vertical_single_channel"] = bool(launch.single_channel)
+    if launch.component_std_deg is not None:
+        payload["vertical_component_std_deg"] = round(launch.component_std_deg, 3)
+    if (
+        launch.horizontal_deg is not None
+        and abs(launch.horizontal_deg) <= MAX_POSTED_HORIZONTAL_DEG
+    ):
+        payload["launch_angle_horizontal"] = round(launch.horizontal_deg, 2)
+        if launch.horizontal_confidence is not None:
+            payload["horizontal_coherence"] = round(launch.horizontal_confidence, 3)
     return payload
 
 
@@ -340,6 +373,31 @@ class RadarWorker(threading.Thread):
             if capture is not None:
                 self.handle(capture)
 
+    def measure_launch(self, capture, measurement):
+        """LCMF-v1, the live kiosk's launch method, fed the radar's own ball speed.
+
+        The live path feeds it the OPS243's radial speed; the range walk's
+        radial speed stands in. None without a tee range or a credible ball.
+        """
+        if self.args.tee_m is None or not credible_ball(measurement):
+            return None
+        from openflight.iwr6843.lcmf import (  # pylint: disable=import-outside-toplevel
+            estimate_lcmf_v1,
+        )
+
+        try:
+            return estimate_lcmf_v1(
+                capture.raw,
+                self.calibration,
+                ball_speed_mph=measurement.ball_speed_mph,
+                club=self.args.club,
+                net_range_m=self.args.net_m,
+                tx_order=self.tx_order,
+            )
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            print(f"RADAR #{capture.sequence}: launch analysis failed: {error}")
+            return None
+
     def handle(self, capture) -> None:
         """Print and log one capture's result."""
         from openflight.iwr6843.shot import process_dump  # pylint: disable=import-outside-toplevel
@@ -368,11 +426,13 @@ class RadarWorker(threading.Thread):
                 print(f"RADAR #{capture.sequence}: analysis failed: {error}")
                 record["error"] = f"analysis: {error}"
             else:
-                launch_trusted = self.args.tee_m is not None
-                line = radar_line(measurement, launch_trusted=launch_trusted)
+                launch = self.measure_launch(capture, measurement)
+                line = radar_line(measurement, launch=launch, tee_known=self.args.tee_m is not None)
                 print(f"RADAR #{capture.sequence}: {line}")
                 record.update(measurement.to_dict())
-                payload = shot_payload(measurement, launch_trusted=launch_trusted)
+                if launch is not None:
+                    record["lcmf"] = launch.to_dict()
+                payload = shot_payload(measurement, launch=launch)
                 if self.args.post_to and payload is not None:
                     status = post_shot(self.args.post_to, payload)
                     print(f"RADAR #{capture.sequence}: {status}")

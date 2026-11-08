@@ -17,44 +17,62 @@ recorder = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(recorder)
 
 
-def measurement(*, found=True, angle=12.3, corrected=101.4, low=False, quality="ok"):
+def measurement(*, found=True, corrected=101.4, low=False, quality="ok"):
     track = SimpleNamespace(n_inliers=41, low_confidence=low, speed_mph=99.0)
     return SimpleNamespace(
         ball_found=found,
         track=track if found else None,
         ball_speed_mph=99.0,
         ball_speed_corrected_mph=corrected,
-        launch_angle_deg=angle,
         quality=quality,
     )
 
 
-def test_a_measured_tee_reports_speed_and_launch():
-    line = recorder.radar_line(measurement(), launch_trusted=True)
+def lcmf(*, status="accepted", angle=16.4, std=1.2, single=False, horizontal=-2.3, coherence=0.8):
+    """An LCMF-v1 result: the live kiosk's launch method."""
+    return SimpleNamespace(
+        status=status,
+        accepted=status.startswith("accepted") and angle is not None,
+        angle_deg=angle,
+        component_std_deg=std,
+        single_channel=single,
+        horizontal_deg=horizontal,
+        horizontal_confidence=coherence,
+    )
 
-    assert line.startswith("ball 101.4 mph, launch 12.3 deg")
+
+def test_an_accepted_launch_is_shown_up_and_sideways():
+    line = recorder.radar_line(measurement(), launch=lcmf(), tee_known=True)
+
+    assert line.startswith("ball 101.4 mph, launch 16.4 deg up, -2.3 deg sideways")
     assert "41 points" in line
 
 
-def test_without_a_tee_range_launch_angle_is_withheld():
-    """The reference calibration's geometry is not this rig's, so its angle is not shown."""
-    line = recorder.radar_line(measurement(), launch_trusted=False)
+def test_a_withheld_launch_says_why():
+    line = recorder.radar_line(
+        measurement(), launch=lcmf(status="rejected_track", angle=None), tee_known=True
+    )
 
-    assert "12.3" not in line
+    assert "launch withheld (rejected_track)" in line
+
+
+def test_without_a_tee_range_the_line_asks_for_one():
+    line = recorder.radar_line(measurement(), tee_known=False)
+
     assert "launch needs --tee-m" in line
 
 
 def test_raw_speed_is_used_when_there_is_no_corrected_speed():
-    assert recorder.radar_line(measurement(corrected=None), launch_trusted=True).startswith(
+    assert recorder.radar_line(measurement(corrected=None), tee_known=True).startswith(
         "ball 99.0 mph"
     )
 
 
 def test_no_ball_and_low_confidence_are_said_plainly():
-    assert recorder.radar_line(measurement(found=False), launch_trusted=True) == (
+    assert recorder.radar_line(measurement(found=False), tee_known=True) == (
         "no ball in the radar data"
     )
-    assert "LOW CONFIDENCE" in recorder.radar_line(measurement(low=True), launch_trusted=True)
+    assert "LOW CONFIDENCE" in recorder.radar_line(measurement(low=True), tee_known=True)
 
 
 def test_the_stand_in_trigger_input_accepts_the_monitor_calls():
@@ -73,18 +91,46 @@ def test_radar_options_default_to_the_wide_config_and_reference_calibration():
     assert args.tee_m is None
 
 
-def test_a_credible_ball_is_sent_as_its_corrected_speed():
-    assert recorder.shot_payload(measurement(), launch_trusted=False) == {"ball_speed_mph": 101.4}
+def test_a_credible_ball_without_a_launch_is_sent_as_speed_only():
+    assert recorder.shot_payload(measurement()) == {"ball_speed_mph": 101.4}
 
 
-def test_launch_angle_is_sent_only_with_a_measured_tee_range():
-    assert recorder.shot_payload(measurement(), launch_trusted=True) == {
+def test_an_accepted_launch_is_sent_with_its_evidence():
+    assert recorder.shot_payload(measurement(), launch=lcmf()) == {
         "ball_speed_mph": 101.4,
-        "launch_angle_vertical": 12.3,
+        "launch_angle_vertical": 16.4,
+        "vertical_single_channel": False,
+        "vertical_component_std_deg": 1.2,
+        "launch_angle_horizontal": -2.3,
+        "horizontal_coherence": 0.8,
     }
-    assert recorder.shot_payload(measurement(angle=None), launch_trusted=True) == {
-        "ball_speed_mph": 101.4
+
+
+def test_a_withheld_launch_sends_speed_only():
+    payload = recorder.shot_payload(measurement(), launch=lcmf(status="rejected_track", angle=None))
+
+    assert payload == {"ball_speed_mph": 101.4}
+
+
+def test_missing_launch_evidence_is_left_out_not_invented():
+    payload = recorder.shot_payload(
+        measurement(), launch=lcmf(std=None, single=True, horizontal=None, coherence=None)
+    )
+
+    assert payload == {
+        "ball_speed_mph": 101.4,
+        "launch_angle_vertical": 16.4,
+        "vertical_single_channel": True,
     }
+
+
+@pytest.mark.parametrize("horizontal", [45.1, -60.0])
+def test_a_horizontal_the_kiosk_would_refuse_is_dropped_not_the_shot(horizontal):
+    payload = recorder.shot_payload(measurement(), launch=lcmf(horizontal=horizontal))
+
+    assert "launch_angle_horizontal" not in payload
+    assert "horizontal_coherence" not in payload
+    assert payload["launch_angle_vertical"] == 16.4
 
 
 @pytest.mark.parametrize(
@@ -92,7 +138,7 @@ def test_launch_angle_is_sent_only_with_a_measured_tee_range():
     [{"found": False}, {"quality": "reject"}, {"low": True}],
 )
 def test_doubtful_readings_never_reach_the_screen(kwargs):
-    assert recorder.shot_payload(measurement(**kwargs), launch_trusted=True) is None
+    assert recorder.shot_payload(measurement(**kwargs), launch=lcmf()) is None
 
 
 class FakeResponse:
@@ -179,3 +225,64 @@ def test_post_shot_survives_a_garbled_reply():
 def test_impossible_geometry_is_refused(argv):
     with pytest.raises(SystemExit):
         recorder.parse_args(argv)
+
+
+def radar_worker(tee_m):
+    """A RadarWorker without a radar: only what measure_launch reads."""
+    worker = object.__new__(recorder.RadarWorker)
+    worker.args = SimpleNamespace(tee_m=tee_m, club="7i", net_m=4.0)
+    worker.calibration = "calibration"
+    worker.tx_order = "normal"
+    return worker
+
+
+def test_launch_is_measured_with_the_radial_track_speed(monkeypatch):
+    import openflight.iwr6843.lcmf as lcmf_module
+
+    calls = []
+    result = lcmf()
+    monkeypatch.setattr(
+        lcmf_module,
+        "estimate_lcmf_v1",
+        lambda raw, cal, **kwargs: calls.append((raw, cal, kwargs)) or result,
+    )
+    capture = SimpleNamespace(raw=b"dump", sequence=3)
+
+    assert radar_worker(1.4).measure_launch(capture, measurement()) is result
+    assert calls == [
+        (
+            b"dump",
+            "calibration",
+            # The live path feeds LCMF the OPS243's radial speed; the range walk's
+            # radial speed (not the cosine-corrected one) stands in for it.
+            {"ball_speed_mph": 99.0, "club": "7i", "net_range_m": 4.0, "tx_order": "normal"},
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("tee_m", "kwargs"),
+    [(None, {}), (1.4, {"found": False}), (1.4, {"quality": "reject"}), (1.4, {"low": True})],
+)
+def test_launch_is_not_measured_without_a_tee_range_or_a_credible_ball(monkeypatch, tee_m, kwargs):
+    import openflight.iwr6843.lcmf as lcmf_module
+
+    monkeypatch.setattr(
+        lcmf_module, "estimate_lcmf_v1", lambda *a, **k: pytest.fail("LCMF must not run")
+    )
+    capture = SimpleNamespace(raw=b"dump", sequence=3)
+
+    assert radar_worker(tee_m).measure_launch(capture, measurement(**kwargs)) is None
+
+
+def test_a_launch_analysis_crash_costs_only_the_angle(monkeypatch, capsys):
+    import openflight.iwr6843.lcmf as lcmf_module
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("bad dump")
+
+    monkeypatch.setattr(lcmf_module, "estimate_lcmf_v1", boom)
+    capture = SimpleNamespace(raw=b"dump", sequence=3)
+
+    assert radar_worker(1.4).measure_launch(capture, measurement()) is None
+    assert "launch analysis failed: bad dump" in capsys.readouterr().out
