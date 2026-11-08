@@ -29,6 +29,7 @@ import {
   PanelAction,
   PickerOverlay,
   PlayerStrip,
+  ClubPanel,
   ShotsPanel,
   StatsPanel,
   type StatsView,
@@ -349,6 +350,15 @@ function AppContent() {
             </ShotProcessingArea>
             {debugMode && <SimShotBadges latestSimShots={latestSimShots} />}
           </>
+        )}
+        {currentView === 'club' && (
+          <ClubPanel
+            shots={shots}
+            profileId={activeProfileId}
+            profileName={activeProfileName}
+            clubLabel={activeImplementLabel}
+            headerAction={changeClubAction}
+          />
         )}
         {currentView === 'profiles' && (
           <ProfilesPanel

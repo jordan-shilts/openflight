@@ -321,6 +321,24 @@
   display: none;
 }
 
+/* Dragged with useDragScroll, so the browser must not claim the gesture. */
+.panel-footer__tabs,
+.panel-footer__tabs .nav__button {
+  touch-action: none;
+}
+
+.panel-footer__tabs--more-right {
+  mask-image: linear-gradient(to right, #000 calc(100% - 2.5rem), transparent);
+}
+
+.panel-footer__tabs--more-left {
+  mask-image: linear-gradient(to left, #000 calc(100% - 2.5rem), transparent);
+}
+
+.panel-footer__tabs--more-left.panel-footer__tabs--more-right {
+  mask-image: linear-gradient(to right, transparent, #000 2.5rem, #000 calc(100% - 2.5rem), transparent);
+}
+
 .panel-footer__tabs .nav__button {
   flex: 0 0 auto;
   min-width: 0;
@@ -2105,5 +2123,237 @@
 
   .live-panel__grid .live-panel__lead .metric-card__unit {
     font-size: 0.63em;
+  }
+}
+
+/* ── Club panel: top view, side view and strike for the latest shot ── */
+
+.club-panel__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  padding: var(--space-md) var(--space-lg) var(--space-sm);
+  overflow: hidden;
+}
+
+.club-panel__cards {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-md);
+}
+
+.club-panel__card {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--color-border-soft);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+}
+
+.club-panel__diagram {
+  flex: 1 1 auto;
+  min-height: 3.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.club-panel__svg {
+  width: 100%;
+  height: 100%;
+  max-height: 9rem;
+  overflow: visible;
+}
+
+.club-panel__card-title {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-text);
+}
+
+.club-panel__readings {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.club-panel__reading {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 3.1rem;
+  align-items: center;
+  column-gap: var(--space-sm);
+  padding-top: 0.35rem;
+  border-top: 1px solid var(--color-border-soft);
+}
+
+.club-panel__reading-label {
+  font-size: 0.66rem;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.club-panel__reading-value {
+  justify-self: end;
+  white-space: nowrap;
+  font-size: 1.05rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  color: var(--color-text);
+}
+
+.club-panel__reading-unit {
+  margin-left: 0.1em;
+  font-size: 0.7em;
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+
+.club-panel__reading-note {
+  grid-column: 1 / -1;
+  font-size: 0.55rem;
+  line-height: 1.2;
+  color: var(--color-text-faint);
+}
+
+.club-panel__badge {
+  justify-self: end;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 0.5rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  line-height: 1.4;
+}
+
+.club-panel__badge--measured {
+  color: var(--color-text-muted);
+}
+
+.club-panel__badge--experimental {
+  color: var(--color-info);
+}
+
+.club-panel__badge--calculated {
+  color: var(--color-accent);
+}
+
+.club-panel__footnote {
+  margin: 0;
+  font-size: 0.58rem;
+  color: var(--color-text-faint);
+}
+
+.club-panel__legend {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem var(--space-md);
+  font-size: 0.58rem;
+  color: var(--color-text-faint);
+}
+
+.club-panel__legend-shot {
+  font-weight: 700;
+  color: var(--color-text-muted);
+}
+
+/* Diagram strokes: delivery in info blue, the face in accent. */
+.club-panel__guide,
+.club-panel__ground {
+  stroke: var(--color-border);
+  stroke-width: 1.5;
+  fill: none;
+}
+
+.club-panel__guide {
+  stroke-dasharray: 3 4;
+}
+
+.club-panel__path {
+  stroke: var(--color-info);
+  stroke-width: 3;
+  stroke-dasharray: 7 4;
+  fill: none;
+}
+
+.club-panel__face {
+  stroke: var(--color-accent);
+  stroke-width: 5;
+  stroke-linecap: round;
+  fill: none;
+}
+
+.club-panel__aim {
+  stroke: var(--color-accent);
+  stroke-width: 1.5;
+  fill: none;
+}
+
+.club-panel__fill-path {
+  fill: var(--color-info);
+}
+
+.club-panel__fill-face {
+  fill: var(--color-accent);
+}
+
+.club-panel__ball {
+  fill: var(--color-text);
+  stroke: var(--color-border);
+  stroke-width: 1;
+}
+
+.club-panel__outline {
+  fill: var(--color-hatch);
+  stroke: var(--color-text-muted);
+  stroke-width: 2;
+}
+
+.club-panel__groove {
+  stroke: var(--color-border);
+  stroke-width: 1.5;
+}
+
+@media (max-height: 440px) {
+  .club-panel__body {
+    padding-top: var(--space-sm);
+  }
+
+  .club-panel__svg {
+    max-height: 5.5rem;
+  }
+
+  .club-panel__reading-value {
+    font-size: 0.9rem;
+  }
+
+  .club-panel__readings {
+    gap: 0.2rem;
+  }
+
+  .club-panel__reading {
+    padding-top: 0.2rem;
+  }
+}
+
+@media (max-width: 640px) and (orientation: portrait) {
+  .club-panel__body {
+    overflow-y: auto;
+    touch-action: none;
+  }
+
+  .club-panel__cards {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

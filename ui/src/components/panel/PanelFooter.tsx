@@ -1,5 +1,7 @@
-import type { ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import Logo from '../../logo/Logo';
+import { useDragScroll } from '../../hooks/useDragScroll';
+import { tabOverflow, type TabOverflow } from './tabOverflow';
 import { TabBar } from '../ui/TabBar';
 import type { PanelView } from './views';
 import { PANEL_VIEWS } from './views';
@@ -28,14 +30,15 @@ interface PanelFooterProps {
   powerStatus?: PowerStatus | null;
 }
 
-const VIEWS_WITH_UNITS: ReadonlySet<PanelView> = new Set(['live', 'stats', 'shots']);
+const VIEWS_WITH_UNITS: ReadonlySet<PanelView> = new Set(['live', 'club', 'stats', 'shots']);
 
 /**
  * Bottom bar: menu button, divider-separated panel tabs, and view meta on the
  * right. Panel actions live in `PanelHeader`.
  *
- * The mockup footer shows four tabs; Profiles and Debug are extra working
- * screens. Burying either behind a gesture makes them unreachable on the kiosk.
+ * The mockup footer shows four tabs; Club, Profiles and Debug are extra working
+ * screens. On a narrow kiosk the row overflows: it scrolls by dragging (native
+ * touch scrolling often doesn't on the Pi) and fades at whichever end has more.
  */
 export function PanelFooter({
   currentView,
@@ -54,6 +57,29 @@ export function PanelFooter({
   const showUnits = VIEWS_WITH_UNITS.has(currentView);
   const storePowerStatus = useSystemStore((state) => state.powerStatus);
   const powerStatus = powerStatusProp !== undefined ? powerStatusProp : storePowerStatus;
+  const tabsRef = useRef<HTMLElement>(null);
+  const dragScroll = useDragScroll(tabsRef, 'x');
+  const [overflow, setOverflow] = useState<TabOverflow>({ left: false, right: false });
+  const measureOverflow = useCallback(() => {
+    const element = tabsRef.current;
+    if (!element) return;
+    const next = tabOverflow(element);
+    setOverflow((current) => (current.left === next.left && current.right === next.right ? current : next));
+  }, []);
+  useEffect(() => {
+    measureOverflow();
+    if (typeof ResizeObserver === 'undefined' || !tabsRef.current) return undefined;
+    const observer = new ResizeObserver(measureOverflow);
+    observer.observe(tabsRef.current);
+    return () => observer.disconnect();
+  }, [measureOverflow, shotCount, debugRecording]);
+  const tabsClassName = [
+    'panel-footer__tabs',
+    overflow.left ? 'panel-footer__tabs--more-left' : '',
+    overflow.right ? 'panel-footer__tabs--more-right' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
   const options = PANEL_VIEWS.map((view) => {
     const label = t(`nav.${view.id}` as MessageKey);
     switch (view.id) {
@@ -90,12 +116,21 @@ export function PanelFooter({
 
       <div className="panel-footer__nav">
         <TabBar
-          className="panel-footer__tabs"
+          className={tabsClassName}
           ariaLabel={t('nav.panels')}
           value={currentView}
           onChange={onChangeView}
           options={options}
           separator={<span className="panel-header__divider" aria-hidden="true" />}
+          navProps={{
+            ref: tabsRef,
+            onScroll: measureOverflow,
+            onPointerDown: dragScroll.onPointerDown,
+            onPointerMove: dragScroll.onPointerMove,
+            onPointerUp: dragScroll.onPointerUp,
+            onPointerCancel: dragScroll.onPointerCancel,
+            onClickCapture: dragScroll.onClickCapture,
+          }}
         />
       </div>
 

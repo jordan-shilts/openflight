@@ -1,6 +1,7 @@
 import { renderToString } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { PanelFooter } from './PanelFooter';
+import { tabOverflow } from './tabOverflow';
 import type { PanelView } from './views';
 import type { PowerStatus } from '../../types/power';
 
@@ -46,8 +47,8 @@ describe('PanelFooter', () => {
     expect(html).toContain('nav__badge">55<');
   });
 
-  it('puts units on Stats and Shots without a footer shot count', () => {
-    for (const view of ['stats', 'shots'] as const) {
+  it('puts units on Club, Stats and Shots without a footer shot count', () => {
+    for (const view of ['club', 'stats', 'shots'] as const) {
       const html = render(view, 4);
 
       expect(html).toContain('mph / yds');
@@ -95,7 +96,7 @@ describe('PanelFooter', () => {
   });
 
   it('keeps the shutdown power control visible on every panel without battery telemetry', () => {
-    for (const view of ['live', 'stats', 'shots', 'camera', 'profiles', 'debug'] as const) {
+    for (const view of ['live', 'club', 'stats', 'shots', 'camera', 'profiles', 'debug'] as const) {
       const html = render(view, 0, null);
 
       expect(html).toContain('panel-footer__power');
@@ -118,6 +119,28 @@ describe('PanelFooter', () => {
     expect(html).toContain('panel-footer__nav');
     expect(html).toContain('panel-footer__tabs');
     expect(html).toContain('aria-label="Panels"');
-    expect(html.match(/panel-header__divider/g)).toHaveLength(5);
+    expect(html.match(/panel-header__divider/g)).toHaveLength(6);
+  });
+});
+
+describe('tabOverflow', () => {
+  it('reports no hidden tabs when the row fits', () => {
+    expect(tabOverflow({ scrollLeft: 0, scrollWidth: 600, clientWidth: 600 })).toEqual({ left: false, right: false });
+  });
+
+  it('fades the right end at the start of an overflowing row', () => {
+    expect(tabOverflow({ scrollLeft: 0, scrollWidth: 760, clientWidth: 600 })).toEqual({ left: false, right: true });
+  });
+
+  it('fades both ends mid-scroll and only the left at the end', () => {
+    expect(tabOverflow({ scrollLeft: 80, scrollWidth: 760, clientWidth: 600 })).toEqual({ left: true, right: true });
+    expect(tabOverflow({ scrollLeft: 160, scrollWidth: 760, clientWidth: 600 })).toEqual({ left: true, right: false });
+  });
+
+  it('ignores sub-pixel rounding', () => {
+    expect(tabOverflow({ scrollLeft: 0.4, scrollWidth: 600.6, clientWidth: 600 })).toEqual({
+      left: false,
+      right: false,
+    });
   });
 });
