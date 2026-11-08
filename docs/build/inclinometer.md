@@ -120,11 +120,35 @@ For the Adafruit board:
 - Z points perpendicular to the board.
 
 The validated installation aligns **Y with the radar tilt direction**. Positive
-Y must increase when the enclosure tilts backward. X/roll is recorded but is not
-currently applied to the launch-angle correction.
+Y must increase when the enclosure tilts backward. The other horizontal axis
+(roll) is recorded but is not currently applied to the launch-angle correction.
 
 Before fixing the board permanently, run the readout script and gently tilt the
 enclosure backward. Confirm that the reported pitch becomes more positive.
+
+### Board Already Fixed With Another Axis Along The Tilt
+
+If the board is already screwed or taped in with **X** along the radar tilt
+direction, or with the arrow pointing toward the back, tell OpenFlight which
+axis to use instead of remounting it. To find the axis, lay the whole
+enclosure on its back (radar face pointing at the ceiling) and print a few
+readings:
+
+```bash
+uv run python scripts/hardware-test/read_lis3dh.py --count 5
+```
+
+| Reading on its back | Flags |
+|---|---|
+| `Y` about `+1g` | none (the default) |
+| `Y` about `-1g` | `--inclinometer-pitch-reverse` |
+| `X` about `+1g` | `--inclinometer-pitch-axis x` |
+| `X` about `-1g` | `--inclinometer-pitch-axis x --inclinometer-pitch-reverse` |
+
+The readout and calibration scripts take the same choice as `--pitch-axis` and
+`--pitch-reverse`. With the right flags, the reported pitch reads about `+90`
+degrees on its back, about `-90` on its face, and stays near zero when the
+enclosure is laid on either side.
 
 ## Enable I2C On The Pi
 
@@ -195,6 +219,9 @@ uv run python scripts/hardware-test/read_lis3dh.py \
 
 # Probe a single address while troubleshooting (default: auto-detect)
 uv run python scripts/hardware-test/read_lis3dh.py --address 0x19
+
+# A board mounted with X along the radar tilt direction
+uv run python scripts/hardware-test/read_lis3dh.py --pitch-axis x
 ```
 
 ## Calibrate The Zero Offset
@@ -212,6 +239,10 @@ For a surface measured at `+0.1` degrees:
 ```bash
 uv run python scripts/hardware-test/calibrate_lis3dh.py --reference-pitch 0.1
 ```
+
+If the board needs `--pitch-axis` or `--pitch-reverse` (see the mounting
+section), pass the same to the calibration helper. It then prints those flags
+along with the zero offset.
 
 The script averages 50 samples and prints a value such as:
 
@@ -278,7 +309,7 @@ The `session_start` entry records:
 
 - Whether the inclinometer initialized.
 - I2C bus and address.
-- Sampling rate and zero offset.
+- Sampling rate, zero offset and pitch axis (`+Y`, `-Y`, `+X` or `-X`).
 - Startup reading or initialization error.
 
 Each `shot_detected` entry records:
@@ -360,6 +391,9 @@ Confirm the inputs have distinct meanings:
 
 - `--iwr6843-tilt-deg`: TI antenna angle relative to the enclosure.
 - `--inclinometer-zero-offset`: LIS3DH calibration bias.
+- `--inclinometer-pitch-axis` / `--inclinometer-pitch-reverse`: which board axis
+  runs along the radar tilt direction. If the startup pitch hardly changes when
+  you tilt the enclosure back, the axis is wrong; see the mounting section.
 - Runtime enclosure pitch: current enclosure angle relative to level.
 
 Do not put the floor slope into `--iwr6843-tilt-deg`, and do not put the TI board
@@ -367,7 +401,9 @@ mounting angle into `--inclinometer-zero-offset`.
 
 ## Current Limitations
 
-- Pitch compensation uses the LIS3DH Y direction.
-- X/roll is logged but not yet applied to full 3D boresight compensation.
+- Pitch compensation uses one horizontal board axis (Y by default, or X with
+  `--inclinometer-pitch-axis x`).
+- The other horizontal axis (roll) is logged but not yet applied to full 3D
+  boresight compensation.
 - Sensor bus, address, and calibration are command-line/runtime settings rather
   than a persisted rig configuration file.

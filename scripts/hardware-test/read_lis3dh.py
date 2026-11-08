@@ -5,7 +5,7 @@ import argparse
 import time
 
 from openflight.inclinometer import detect_accelerometer
-from openflight.inclinometer.service import pitch_degrees
+from openflight.inclinometer.service import PITCH_AXES, pitch_degrees
 
 
 def main() -> None:
@@ -26,6 +26,17 @@ def main() -> None:
         help="Degrees added to raw inclinometer pitch (default: 0)",
     )
     parser.add_argument(
+        "--pitch-axis",
+        choices=PITCH_AXES,
+        default="y",
+        help="Axis along the radar tilt direction, as --inclinometer-pitch-axis (default: y)",
+    )
+    parser.add_argument(
+        "--pitch-reverse",
+        action="store_true",
+        help="Flip the pitch axis, as --inclinometer-pitch-reverse",
+    )
+    parser.add_argument(
         "--iwr6843-tilt-deg",
         type=float,
         default=None,
@@ -40,7 +51,7 @@ def main() -> None:
         index = 0
         while args.count == 0 or index < args.count:
             sample = sensor.read()
-            raw_pitch = pitch_degrees(sample)
+            raw_pitch = pitch_degrees(sample, args.pitch_axis, args.pitch_reverse)
             enclosure_pitch = raw_pitch + args.zero_offset_deg
             output = (
                 f"X={sample.x_g:+.3f}g  Y={sample.y_g:+.3f}g  "
