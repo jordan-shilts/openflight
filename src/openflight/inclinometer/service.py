@@ -31,9 +31,25 @@ class Accelerometer(Protocol):  # pylint: disable=unnecessary-ellipsis
         ...  # pylint: disable=unnecessary-ellipsis
 
 
-def pitch_degrees(sample: AccelerationSample) -> float:
-    """Return enclosure pitch; positive Y is positive tilt-back."""
-    return math.degrees(math.atan2(sample.y_g, math.hypot(sample.x_g, sample.z_g)))
+PITCH_AXES = ("x", "y")
+
+
+def pitch_degrees(sample: AccelerationSample, axis: str = "y", reverse: bool = False) -> float:
+    """Return enclosure pitch in degrees; positive is tilt-back.
+
+    ``axis`` is the board axis that runs along the radar tilt direction (Y in the
+    validated installation). It must read positive when the enclosure tilts
+    backward; ``reverse`` flips it for a board mounted with that arrow the other way.
+    """
+    if axis == "y":
+        along, across = sample.y_g, sample.x_g
+    elif axis == "x":
+        along, across = sample.x_g, sample.y_g
+    else:
+        raise ValueError(f"pitch axis must be one of {', '.join(PITCH_AXES)}, not {axis!r}")
+    if reverse:
+        along = -along
+    return math.degrees(math.atan2(along, math.hypot(across, sample.z_g)))
 
 
 class InclinometerService:
@@ -44,6 +60,8 @@ class InclinometerService:
         sensor: Accelerometer,
         *,
         zero_offset_deg: float = 0.0,
+        pitch_axis: str = "y",
+        pitch_reverse: bool = False,
         sample_hz: float = 10.0,
         window_samples: int = 8,
         history_seconds: float = 15.0,
@@ -53,8 +71,14 @@ class InclinometerService:
     ):
         if sample_hz <= 0 or window_samples < 2:
             raise ValueError("sample_hz must be positive and window_samples must be at least 2")
+        if pitch_axis not in PITCH_AXES:
+            raise ValueError(
+                f"pitch_axis must be one of {', '.join(PITCH_AXES)}, not {pitch_axis!r}"
+            )
         self.sensor = sensor
         self.zero_offset_deg = zero_offset_deg
+        self.pitch_axis = pitch_axis
+        self.pitch_reverse = pitch_reverse
         self.sample_hz = sample_hz
         self.window_samples = window_samples
         self.max_snapshot_age_s = max_snapshot_age_s
@@ -112,7 +136,7 @@ class InclinometerService:
             if len(self._samples) < self.window_samples:
                 return None
             samples = list(self._samples)
-            pitches = [pitch_degrees(item) for item in samples]
+            pitches = [pitch_degrees(item, self.pitch_axis, self.pitch_reverse) for item in samples]
             pitch_std = statistics.pstdev(pitches)
             x_g = statistics.median(item.x_g for item in samples)
             y_g = statistics.median(item.y_g for item in samples)

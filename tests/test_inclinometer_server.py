@@ -150,7 +150,26 @@ def test_init_inclinometer_is_fail_soft_when_no_chip_is_detected(monkeypatch):
     assert logged["context"] == {"i2c_bus": 1, "i2c_address": "auto"}
 
 
-def test_init_inclinometer_records_detected_lsm6ds3(monkeypatch):
+@pytest.mark.parametrize(
+    ("axis_kwargs", "expected_axis", "expected_label"),
+    [
+        ({}, {"pitch_axis": "y", "pitch_reverse": False}, "+Y"),
+        ({"pitch_axis": "x"}, {"pitch_axis": "x", "pitch_reverse": False}, "+X"),
+        (
+            {"pitch_axis": "x", "pitch_reverse": True},
+            {"pitch_axis": "x", "pitch_reverse": True},
+            "-X",
+        ),
+        (
+            {"pitch_axis": "y", "pitch_reverse": True},
+            {"pitch_axis": "y", "pitch_reverse": True},
+            "-Y",
+        ),
+    ],
+)
+def test_init_inclinometer_records_detected_lsm6ds3(
+    monkeypatch, capsys, axis_kwargs, expected_axis, expected_label
+):
     class DetectedSensor:
         NAME = "lsm6ds3"
         address = 0x6B
@@ -160,7 +179,7 @@ def test_init_inclinometer_records_detected_lsm6ds3(monkeypatch):
 
         def __init__(self, sensor, **kwargs):
             assert isinstance(sensor, DetectedSensor)
-            assert kwargs == {"zero_offset_deg": 0.5}
+            assert kwargs == {"zero_offset_deg": 0.5, **expected_axis}
 
         def start(self):
             pass
@@ -177,10 +196,12 @@ def test_init_inclinometer_records_detected_lsm6ds3(monkeypatch):
     monkeypatch.setattr(server, "inclinometer_service", None)
     monkeypatch.setattr(server, "inclinometer_runtime_config", {"enabled": False})
 
-    assert server.init_inclinometer(zero_offset_deg=0.5) is True
+    assert server.init_inclinometer(zero_offset_deg=0.5, **axis_kwargs) is True
     assert server.inclinometer_runtime_config["sensor"] == "lsm6ds3"
     assert server.inclinometer_runtime_config["i2c_address"] == "0x6b"
+    assert server.inclinometer_runtime_config["pitch_axis"] == expected_label
     assert server.inclinometer_runtime_config["startup"]["status"] == "stable"
+    assert f"pitch axis {expected_label}" in capsys.readouterr().out
 
 
 def test_init_inclinometer_closes_detected_sensor_when_service_setup_fails(monkeypatch):
@@ -202,10 +223,11 @@ def test_init_inclinometer_closes_detected_sensor_when_service_setup_fails(monke
     monkeypatch.setattr("openflight.inclinometer.InclinometerService", broken_service)
     monkeypatch.setattr(server, "log_session_error", lambda *_args, **_kwargs: None)
 
-    assert server.init_inclinometer(zero_offset_deg=0.0) is False
+    assert server.init_inclinometer(zero_offset_deg=0.0, pitch_axis="x") is False
     assert closed == [True]
     assert server.inclinometer_runtime_config["sensor"] == "lsm6ds3"
     assert server.inclinometer_runtime_config["i2c_address"] == "0x6a"
+    assert server.inclinometer_runtime_config["pitch_axis"] == "+X"
 
 
 def test_inclinometer_flag_requires_iwr6843(monkeypatch):
@@ -213,6 +235,91 @@ def test_inclinometer_flag_requires_iwr6843(monkeypatch):
 
     with pytest.raises(SystemExit, match="2"):
         server.main()
+
+
+def test_inclinometer_pitch_axis_flag_rejects_unknown_axis(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["openflight-server", "--iwr6843", "--inclinometer", "--inclinometer-pitch-axis", "z"],
+    )
+
+    with pytest.raises(SystemExit, match="2"):
+        server.main()
+
+
+class _StopAfterInclinometer(Exception):
+    pass
+
+
+# Module globals main() rebinds before it reaches the inclinometer.
+_MAIN_GLOBALS = (
+    "ballistics_enabled",
+    "battery_provider",
+    "profile_store",
+    "ball_speed_correction_enabled",
+    "ball_speed_correction_distance_ft",
+    "ball_speed_correction_ball_above_radar_ft",
+    "_VERTICAL_RADAR_GATE_BYPASS",
+    "calculated_spin_enabled",
+    "iwr6843_runtime",
+)
+
+
+@pytest.mark.parametrize(
+    ("axis_args", "expected"),
+    [
+        ([], {"pitch_axis": "y", "pitch_reverse": False}),
+        (["--inclinometer-pitch-axis", "x"], {"pitch_axis": "x", "pitch_reverse": False}),
+        (
+            ["--inclinometer-pitch-axis", "x", "--inclinometer-pitch-reverse"],
+            {"pitch_axis": "x", "pitch_reverse": True},
+        ),
+    ],
+)
+def test_main_passes_pitch_axis_flags_to_inclinometer(tmp_path, monkeypatch, axis_args, expected):
+    received = {}
+
+    def capture_inclinometer(**kwargs):
+        received.update(kwargs)
+        raise _StopAfterInclinometer
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "openflight-server",
+            "--no-logging",
+            "--iwr6843",
+            "--inclinometer",
+            "--inclinometer-zero-offset",
+            "1.5",
+            *axis_args,
+            "--startup-status-file",
+            str(tmp_path / "status.json"),
+        ],
+    )
+
+    def ready_iwr6843(**_kwargs):
+        server.iwr6843_runtime = SimpleNamespace(
+            calibration=SimpleNamespace(tee_ball_height_m=0.02, radar_height_m=0.3),
+            tx_order="default",
+        )
+        return True
+
+    # Registered so monkeypatch restores what main() and ready_iwr6843 rebind;
+    # otherwise later server tests see ball-speed correction switched on.
+    for name in _MAIN_GLOBALS:
+        monkeypatch.setattr(server, name, getattr(server, name))
+    monkeypatch.setattr(server, "init_session_logger", lambda **_kwargs: None)
+    monkeypatch.setattr(server, "init_iwr6843", ready_iwr6843)
+    monkeypatch.setattr(server, "init_inclinometer", capture_inclinometer)
+    monkeypatch.setattr(server, "_cleanup_hardware_for_shutdown", lambda: None)
+
+    with pytest.raises(_StopAfterInclinometer):
+        server.main()
+
+    assert received == {"zero_offset_deg": 1.5, **expected}
 
 
 def test_shot_dict_includes_inclinometer_provenance():

@@ -1525,23 +1525,36 @@ def _iwr6843_startup_recovery(error: object) -> str:
 
 
 def init_inclinometer(
-    *, zero_offset_deg: float, bus_number: int = 1, address: int | None = None
+    *,
+    zero_offset_deg: float,
+    pitch_axis: str = "y",
+    pitch_reverse: bool = False,
+    bus_number: int = 1,
+    address: int | None = None,
 ) -> bool:
     """Start the optional LIS3DH/LSM6DS3 service without risking radar availability.
 
     With ``address`` left as None, every supported chip address is probed.
+    ``pitch_axis``/``pitch_reverse`` name the board axis that reads positive when
+    the enclosure tilts backward (Y in the validated installation).
     """
     global inclinometer_service  # pylint: disable=global-statement
     global inclinometer_runtime_config  # pylint: disable=global-statement
 
     requested_address = "auto" if address is None else f"0x{address:02x}"
+    axis_label = f"{'-' if pitch_reverse else '+'}{pitch_axis.upper()}"
     service = None
     sensor = None
     try:
         from .inclinometer import InclinometerService, detect_accelerometer
 
         sensor = detect_accelerometer(bus_number=bus_number, address=address)
-        service = InclinometerService(sensor, zero_offset_deg=zero_offset_deg)
+        service = InclinometerService(
+            sensor,
+            zero_offset_deg=zero_offset_deg,
+            pitch_axis=pitch_axis,
+            pitch_reverse=pitch_reverse,
+        )
         service.start()
         startup = service.wait_for_stable(timeout_s=2.0)
         inclinometer_service = service
@@ -1552,6 +1565,7 @@ def init_inclinometer(
             "i2c_address": f"0x{sensor.address:02x}",
             "sample_hz": service.sample_hz,
             "zero_offset_deg": zero_offset_deg,
+            "pitch_axis": axis_label,
             "startup": startup.to_dict(),
         }
         sensor_label = sensor.NAME.upper()
@@ -1570,7 +1584,7 @@ def init_inclinometer(
         snapshot = startup.snapshot
         print(
             f"Inclinometer ({sensor_label} at 0x{sensor.address:02x}) enabled "
-            f"(raw pitch {snapshot.raw_pitch_deg:+.2f}deg, "
+            f"(pitch axis {axis_label}, raw pitch {snapshot.raw_pitch_deg:+.2f}deg, "
             f"calibrated {snapshot.calibrated_pitch_deg:+.2f}deg)"
         )
         if iwr6843_runtime is not None:
@@ -1604,6 +1618,7 @@ def init_inclinometer(
             "i2c_bus": bus_number,
             "i2c_address": (f"0x{sensor.address:02x}" if sensor is not None else requested_address),
             "zero_offset_deg": zero_offset_deg,
+            "pitch_axis": axis_label,
             "error": str(error),
         }
         return False
@@ -5283,6 +5298,20 @@ def main():
         help="Degrees added to raw inclinometer pitch (default: 0)",
     )
     parser.add_argument(
+        "--inclinometer-pitch-axis",
+        choices=("x", "y"),
+        default="y",
+        help=(
+            "Accelerometer axis that runs along the radar tilt direction: the one that "
+            "reads about +1g with the enclosure on its back (default: y)"
+        ),
+    )
+    parser.add_argument(
+        "--inclinometer-pitch-reverse",
+        action="store_true",
+        help="Flip the pitch axis when it reads about -1g with the enclosure on its back",
+    )
+    parser.add_argument(
         "--iwr6843-port", default=None, help="TI serial port (auto-detect by default)"
     )
     parser.add_argument(
@@ -5731,7 +5760,11 @@ def main():
 
     if args.inclinometer:
         startup_status.start("inclinometer", "Connecting inclinometer")
-        if not init_inclinometer(zero_offset_deg=args.inclinometer_zero_offset):
+        if not init_inclinometer(
+            zero_offset_deg=args.inclinometer_zero_offset,
+            pitch_axis=args.inclinometer_pitch_axis,
+            pitch_reverse=args.inclinometer_pitch_reverse,
+        ):
             print("WARNING: Inclinometer unavailable; continuing with configured IWR6843 tilt")
             startup_status.skip("inclinometer", "Inclinometer unavailable; continuing")
         else:

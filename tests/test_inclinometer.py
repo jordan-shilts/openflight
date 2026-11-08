@@ -283,6 +283,101 @@ def test_pitch_is_positive_when_sensor_y_tilts_back():
     assert pitch_degrees(sample) == pytest.approx(12.0)
 
 
+def test_pitch_from_x_axis_reads_x_tilt_and_ignores_y_roll():
+    angle = math.radians(12.0)
+    tilted_back = AccelerationSample(1.0, math.sin(angle), 0.0, math.cos(angle))
+    rolled = AccelerationSample(1.0, 0.0, math.sin(angle), math.cos(angle))
+
+    assert pitch_degrees(tilted_back, "x") == pytest.approx(12.0)
+    assert pitch_degrees(rolled, "x") == pytest.approx(0.0)
+    # The default Y axis misses a tilt that lands on X entirely.
+    assert pitch_degrees(tilted_back) == pytest.approx(0.0)
+
+
+@pytest.mark.parametrize("axis", ["x", "y"])
+def test_pitch_reverse_flips_the_sign_of_either_axis(axis):
+    along = math.sin(math.radians(7.0))
+    sample = AccelerationSample(
+        1.0,
+        along if axis == "x" else 0.0,
+        along if axis == "y" else 0.0,
+        math.cos(math.radians(7.0)),
+    )
+
+    assert pitch_degrees(sample, axis) == pytest.approx(7.0)
+    assert pitch_degrees(sample, axis, reverse=True) == pytest.approx(-7.0)
+
+
+@pytest.mark.parametrize("axis", ["z", "Y", "", "+x"])
+def test_pitch_rejects_unknown_axis(axis):
+    with pytest.raises(ValueError, match="pitch axis must be one of x, y"):
+        pitch_degrees(AccelerationSample(1.0, 0.0, 0.0, 1.0), axis)
+
+
+# A GY-LSM6DS3 screwed into an enclosure with X along the radar tilt direction,
+# read on the bench with the enclosure flat, on its back, on its face and on its
+# right side (x_g, y_g, z_g).
+X_MOUNTED_READINGS = {
+    "flat": (-0.044, -0.052, 1.016),
+    "back": (0.975, -0.018, -0.104),
+    "face": (-0.974, 0.047, -0.187),
+    "right_side": (0.188, 0.984, 0.124),
+}
+
+
+def test_x_mounted_board_needs_the_x_pitch_axis():
+    samples = {name: AccelerationSample(0.0, *axes) for name, axes in X_MOUNTED_READINGS.items()}
+    default = {name: pitch_degrees(sample) for name, sample in samples.items()}
+    x_axis = {name: pitch_degrees(sample, "x") for name, sample in samples.items()}
+
+    # Read through Y, tilting back or forward barely registers while lying on
+    # its side looks like a steep tilt-back.
+    assert abs(default["back"]) < 5.0
+    assert abs(default["face"]) < 5.0
+    assert default["right_side"] > 70.0
+    # Read through X, the tilt-back direction and sign come out right.
+    assert x_axis["back"] > 80.0
+    assert x_axis["face"] < -75.0
+    assert abs(x_axis["flat"]) < 5.0
+    assert abs(x_axis["right_side"]) < abs(default["right_side"])
+
+
+def test_service_uses_configured_pitch_axis_and_reverse():
+    service = InclinometerService(sensor=None, pitch_axis="x", pitch_reverse=True, window_samples=3)
+    angle = math.radians(5.0)
+    for timestamp in (1.0, 1.1, 1.2):
+        service.add_sample(AccelerationSample(timestamp, -math.sin(angle), 0.0, math.cos(angle)))
+
+    selection = service.snapshot_for_impact(1.3)
+
+    assert selection.status == "stable"
+    assert selection.snapshot.raw_pitch_deg == pytest.approx(5.0)
+
+
+def test_detected_lsm6ds3_with_x_along_tilt_feeds_the_service_end_to_end():
+    angle = math.radians(4.0)
+    bus = FakeLSMBus(axes=(math.sin(angle), 0.0, math.cos(angle)))
+    sensor = LSM6DS3(bus=bus)
+    sensor.initialize()
+    service = InclinometerService(
+        sensor=sensor, zero_offset_deg=1.0, pitch_axis="x", window_samples=3
+    )
+
+    for timestamp in (1.0, 1.1, 1.2):
+        service.add_sample(sensor.read(timestamp=timestamp))
+    selection = service.snapshot_for_impact(1.3)
+
+    assert selection.status == "stable"
+    assert selection.snapshot.raw_pitch_deg == pytest.approx(4.0, abs=0.01)
+    assert selection.snapshot.calibrated_pitch_deg == pytest.approx(5.0, abs=0.01)
+
+
+@pytest.mark.parametrize("axis", ["z", "X", ""])
+def test_service_rejects_unknown_pitch_axis(axis):
+    with pytest.raises(ValueError, match="pitch_axis must be one of x, y"):
+        InclinometerService(sensor=None, pitch_axis=axis)
+
+
 def test_service_applies_zero_offset_and_selects_preimpact_snapshot():
     service = InclinometerService(
         sensor=None,
