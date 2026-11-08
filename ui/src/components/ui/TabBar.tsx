@@ -1,5 +1,10 @@
-import { Fragment, type ReactNode } from 'react';
+import { Fragment, type HTMLAttributes, type ReactNode, type Ref } from 'react';
 import './TabBar.css';
+
+/** Extra attributes for the <nav>, e.g. a ref and drag-scroll handlers when it overflows. */
+export type TabBarNavProps = Omit<HTMLAttributes<HTMLElement>, 'className' | 'aria-label'> & {
+  ref?: Ref<HTMLElement>;
+};
 
 export function TabBar<T extends string>({
   value,
@@ -8,6 +13,7 @@ export function TabBar<T extends string>({
   className,
   ariaLabel,
   separator,
+  navProps,
 }: {
   value: T;
   options: ReadonlyArray<{
@@ -23,9 +29,10 @@ export function TabBar<T extends string>({
   ariaLabel?: string;
   /** Hairline (or other) separator rendered between items. */
   separator?: ReactNode;
+  navProps?: TabBarNavProps;
 }) {
   return (
-    <nav className={className ? `nav ${className}` : 'nav'} aria-label={ariaLabel}>
+    <nav {...navProps} className={className ? `nav ${className}` : 'nav'} aria-label={ariaLabel}>
       {options.map((option, index) => {
         const active = option.id === value;
         const classes = ['nav__button'];

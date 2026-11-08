@@ -10,6 +10,7 @@ import {
   getSpeedUnit,
 } from '../../utils/units';
 import { getHtmlLang, t } from '../../i18n';
+import { selectAttackAngle, selectClubPath } from './clubDelivery';
 
 /** Placeholder for a metric the current shot has no value for. */
 export const NO_VALUE = '—';
@@ -72,11 +73,6 @@ function markEstimated(isEstimated: boolean): true | undefined {
   return isEstimated ? true : undefined;
 }
 
-function experimentalStatus(status: string | null | undefined): string {
-  if (!status || status === 'candidate_available') return 'candidate';
-  return status.replace(/^rejected_/, 'rejected: ').replaceAll('_', ' ');
-}
-
 /** Keeps the `carry` id for a putt so a pinned Carry tile stays pinned as Roll. */
 function distanceMetric(shot: Shot, unitSystem: UnitSystem): LiveMetric {
   if (isPuttShot(shot)) {
@@ -102,29 +98,8 @@ function buildBallStrikeMetrics(shot: Shot, unitSystem: UnitSystem): LiveMetric[
   const angleConfidence = launchAngleQuality(shot.launch_angle_confidence);
   const angleEstimated = shot.angle_source === 'estimated';
   const horizontalLaunchIsCameraAssisted = shot.launch_angle_horizontal_source === 'camera_assisted_experimental';
-  const fusedDeliveryAttempted = shot.experimental_fused_status != null;
-  const attackAngle =
-    shot.club_angle_deg ??
-    shot.experimental_fused_attack_angle_deg ??
-    (!fusedDeliveryAttempted ? shot.experimental_attack_angle_deg : null) ??
-    null;
-  const attackIsExperimental =
-    shot.club_angle_deg === null &&
-    (shot.experimental_fused_attack_angle_deg != null ||
-      shot.experimental_fused_status != null ||
-      shot.experimental_attack_angle_deg != null ||
-      shot.experimental_attack_angle_status != null);
-  const clubPath =
-    shot.club_path_deg ??
-    shot.experimental_fused_club_path_deg ??
-    (!fusedDeliveryAttempted ? shot.experimental_club_path_deg : null) ??
-    null;
-  const clubPathIsExperimental =
-    shot.club_path_deg === null &&
-    (shot.experimental_fused_club_path_deg != null ||
-      shot.experimental_fused_status != null ||
-      shot.experimental_club_path_deg != null ||
-      shot.experimental_club_path_status != null);
+  const attack = selectAttackAngle(shot);
+  const clubPath = selectClubPath(shot);
 
   return [
     {
@@ -181,38 +156,20 @@ function buildBallStrikeMetrics(shot: Shot, unitSystem: UnitSystem): LiveMetric[
     {
       id: 'club_path',
       label: t('metric.clubPath'),
-      value: formatOptionalAngle(clubPath, true),
-      unit: angleUnit(clubPath),
-      subtext:
-        shot.club_path_deg !== null
-          ? undefined
-          : fusedDeliveryAttempted
-            ? shot.experimental_fused_club_path_deg != null
-              ? 'camera fused'
-              : experimentalStatus(shot.experimental_fused_status)
-            : clubPathIsExperimental
-              ? experimentalStatus(shot.experimental_club_path_status)
-              : undefined,
-      confidence: clubPathIsExperimental ? (shot.experimental_fused_club_path_confidence ?? 'experimental') : null,
-      confidenceLabel: shot.experimental_fused_club_path_confidence ? 'experimental' : undefined,
+      value: formatOptionalAngle(clubPath.value, true),
+      unit: angleUnit(clubPath.value),
+      subtext: clubPath.note,
+      confidence: clubPath.confidence,
+      confidenceLabel: clubPath.confidenceLabel,
     },
     {
       id: 'club_aoa',
       label: t('metric.clubAoa'),
-      value: formatOptionalAngle(attackAngle, true),
-      unit: angleUnit(attackAngle),
-      subtext:
-        shot.club_angle_deg !== null
-          ? undefined
-          : fusedDeliveryAttempted
-            ? shot.experimental_fused_attack_angle_deg != null
-              ? 'camera fused'
-              : experimentalStatus(shot.experimental_fused_status)
-            : attackIsExperimental
-              ? experimentalStatus(shot.experimental_attack_angle_status)
-              : undefined,
-      confidence: attackIsExperimental ? (shot.experimental_fused_attack_angle_confidence ?? 'experimental') : null,
-      confidenceLabel: shot.experimental_fused_attack_angle_confidence ? 'experimental' : undefined,
+      value: formatOptionalAngle(attack.value, true),
+      unit: angleUnit(attack.value),
+      subtext: attack.note,
+      confidence: attack.confidence,
+      confidenceLabel: attack.confidenceLabel,
     },
   ];
 }
