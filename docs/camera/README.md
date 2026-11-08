@@ -217,6 +217,12 @@ automatically. The tab shows the current shutter, gain, impact-area brightness,
 contrast, motion-blur risk, and whether camera-assisted analysis is eligible.
 There is no manual exposure override in the UI.
 
+`--camera-capture` also works with `--mock`, for a rig whose OPS243 is not
+fitted yet. The Camera tab then previews the camera and runs automatic
+exposure so it can be aimed. Simulated shots never take a clip and are never
+fed to camera analysis, and `--camera-shot-analysis` stays unavailable with
+`--mock`.
+
 With the OpenFlight driver and the fixed `320x200` capture mode, **View up** and
 **View down** move the real sensor window in safe 10-pixel steps. Each move
 briefly restarts the camera and refills the pre-trigger ring. Wait for the tab

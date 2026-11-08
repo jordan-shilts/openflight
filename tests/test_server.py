@@ -4778,6 +4778,89 @@ class TestClubPathOwnershipGuard:
         assert "cannot both own launch angle" in capsys.readouterr().err
 
 
+class TestCameraPreviewInMockMode:
+    """Until the OPS243 is fitted the kiosk has to run --mock, and the camera can
+    be the only real sensor on the rig. --camera-capture must still start it so
+    the Camera tab can aim and expose it, while simulated shots must never be
+    paired with real camera clips or fed to camera analysis."""
+
+    @staticmethod
+    def _run_main(monkeypatch, *argv):
+        camera_calls = []
+        monkeypatch.setattr(sys, "argv", ["openflight-server", *argv])
+        monkeypatch.setattr(
+            server_module,
+            "init_camera_capture",
+            lambda **kwargs: camera_calls.append(kwargs) or True,
+        )
+        monkeypatch.setattr(server_module, "start_monitor", lambda **kwargs: None)
+        monkeypatch.setattr(server_module, "load_sim_config", lambda: [])
+        monkeypatch.setattr(server_module, "build_connectors", lambda *args, **kwargs: [])
+        monkeypatch.setattr(server_module, "init_session_logger", lambda **kwargs: None)
+        monkeypatch.setattr(server_module, "_cleanup_hardware_for_shutdown", lambda: None)
+        monkeypatch.setattr(server_module.socketio, "run", lambda *args, **kwargs: None)
+        server_module.main()
+        return camera_calls
+
+    def test_mock_mode_starts_the_camera(self, monkeypatch):
+        calls = self._run_main(
+            monkeypatch,
+            "--mock",
+            "--no-logging",
+            "--camera-capture",
+            "--camera-capture-rotate-180",
+        )
+
+        assert len(calls) == 1
+        assert calls[0]["rotate_180"] is True
+        assert calls[0]["shot_analysis_enabled"] is False
+        # No TI radar, so clips stay on the sound-trigger GPIO edge.
+        assert calls[0]["use_gpio_trigger"] is True
+
+    def test_mock_mode_without_the_flag_leaves_the_camera_off(self, monkeypatch):
+        assert self._run_main(monkeypatch, "--mock", "--no-logging") == []
+
+    def test_mock_mode_still_refuses_camera_shot_analysis(self, monkeypatch, capsys):
+        """Shot analysis fuses camera geometry into real radar shots; simulated
+        shots have nothing to fuse with, so the combination stays an error."""
+        monkeypatch.setattr(sys, "argv", ["openflight-server", "--mock", "--camera-shot-analysis"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            server_module.main()
+
+        assert exc_info.value.code == 2
+        assert "--camera-shot-analysis cannot be used with --mock" in capsys.readouterr().err
+
+    def test_simulated_shots_never_take_a_camera_clip(self, monkeypatch):
+        clip_requests = []
+
+        class CameraRuntime:
+            camera_analysis_eligible = True
+
+            @staticmethod
+            def capture_for_shot(impact_timestamp, timeout_s):
+                clip_requests.append((impact_timestamp, timeout_s))
+
+        monkeypatch.setattr(server_module, "camera_capture_runtime", CameraRuntime())
+        monkeypatch.setattr(server_module, "_mock_enrichment_enabled", lambda: False)
+        monkeypatch.setattr(server_module, "iwr6843_runtime", None)
+        monkeypatch.setattr(server_module, "kld7_vertical", None)
+        monkeypatch.setattr(server_module, "kld7_horizontal", None)
+        shot = Shot(
+            ball_speed_mph=100.0,
+            timestamp=datetime.now(),
+            club=ClubType.IRON_7,
+            mode="mock",
+        )
+
+        result = server_module._enrich_shot_from_optional_hardware(shot)
+
+        assert clip_requests == []
+        assert result.camera_capture_ms is None
+        assert result.camera_analysis_ms is None
+        assert shot.camera_replay is None
+
+
 class TestOpsBaudValidation:
     """The radar can only move to a rate it has an ``In`` API command for, so an
     unsupported --ops-baud is refused by the hardware and leaves the link at

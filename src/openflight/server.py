@@ -5073,7 +5073,10 @@ def main():
     parser.add_argument(
         "--camera-capture",
         action="store_true",
-        help="Enable high-speed camera rolling-buffer capture and replay",
+        help=(
+            "Enable high-speed camera rolling-buffer capture and replay "
+            "(with --mock: live preview and exposure only; simulated shots take no clips)"
+        ),
     )
     parser.add_argument(
         "--camera-shot-analysis",
@@ -5533,10 +5536,12 @@ def main():
         parser.error("--inclinometer requires --iwr6843")
     if args.iwr6843 and args.mock:
         parser.error("--iwr6843 cannot be used with --mock")
+    # --camera-capture is allowed with --mock: the camera still previews, sets its
+    # exposure and saves GPIO-triggered clips, while simulated shots never take a
+    # clip (_enrich_shot_from_optional_hardware skips mock shots). Shot analysis
+    # needs real radar shots to fuse with, so it stays blocked.
     if args.camera_shot_analysis and args.mock:
         parser.error("--camera-shot-analysis cannot be used with --mock")
-    if args.camera_capture and args.mock:
-        parser.error("--camera-capture cannot be used with --mock")
     if args.iwr6843 and (args.iwr6843_tee_m <= 0 or args.iwr6843_net_m <= 0):
         parser.error("--iwr6843-tee-m and --iwr6843-net-m must be positive")
     if args.camera_capture and (
