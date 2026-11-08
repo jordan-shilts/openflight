@@ -144,7 +144,13 @@ class CameraCaptureRuntime:
         button_factory: Callable | None = None,
         use_gpio_trigger: bool = True,
         vertical_offset_path: str | Path = OV9281_VERTICAL_OFFSET_PATH,
+        frame_listener: Callable[[CameraFrame], None] | None = None,
     ):
+        """``frame_listener`` sees every buffered frame on the camera thread, so it
+        must be quick (hand the frame to a queue). A software trigger, such as a
+        motion detector standing in for the sound trigger, calls notify_trigger().
+        """
+        self._frame_listener = frame_listener
         self.output_dir = Path(output_dir).expanduser()
         self.settings = settings or CameraCaptureSettings()
         self._button_factory = button_factory
@@ -687,15 +693,16 @@ class CameraCaptureRuntime:
                     self.settings.rotate_180,
                     self.settings.mirror_horizontal,
                 )
-            self._ring.add_frame(
-                CameraFrame(
-                    image=image,
-                    sensor_timestamp_ns=int(metadata["SensorTimestamp"]),
-                    host_timestamp_ns=time.monotonic_ns(),
-                    exposure_us=int(metadata.get("ExposureTime", 0)),
-                    analogue_gain=float(metadata.get("AnalogueGain", 0.0)),
-                )
+            frame = CameraFrame(
+                image=image,
+                sensor_timestamp_ns=int(metadata["SensorTimestamp"]),
+                host_timestamp_ns=time.monotonic_ns(),
+                exposure_us=int(metadata.get("ExposureTime", 0)),
+                analogue_gain=float(metadata.get("AnalogueGain", 0.0)),
             )
+            self._ring.add_frame(frame)
+            if self._frame_listener is not None:
+                self._frame_listener(frame)
             capture = self._ring.pop_capture()
             if capture is not None:
                 self._ready.put(capture)
