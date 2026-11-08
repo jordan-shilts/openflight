@@ -1844,6 +1844,71 @@ def _stream_catch_up(last_event_id) -> list[tuple[str, bytes]] | None:
         return None
 
 
+MEASURED_SHOT_MODE = "radar-only"
+_MEASURED_BALL_SPEED_MPH = (5.0, 250.0)
+_MEASURED_LAUNCH_DEG = (-30.0, 80.0)
+_LOCAL_ADDRESSES = frozenset({"127.0.0.1", "::1"})
+
+
+def _measured_number(
+    payload: dict, key: str, bounds: tuple[float, float], *, required: bool
+) -> float | None:
+    """One validated number from a measured-shot payload; ValueError names the field."""
+    value = payload.get(key)
+    if value is None:
+        if required:
+            raise ValueError(f"{key} is required")
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError(f"{key} must be a number")
+    low, high = bounds
+    if not low <= value <= high:
+        raise ValueError(f"{key} must be between {low:g} and {high:g}")
+    return float(value)
+
+
+@app.route("/api/shots/measured", methods=["POST"])
+def post_measured_shot():
+    """Accept a swing measured outside the OPS path while the kiosk runs --mock.
+
+    Until the OPS243 is fitted, the camera-triggered TI radar recorder measures
+    ball speed (and launch angle once the rig geometry is known) and posts each
+    swing here, so it shows on the kiosk like any shot. Only the Pi itself may
+    post, so a LAN client cannot inject shots, and only in mock mode, so a real
+    OPS session never mixes in a second source. Anything the payload leaves out
+    (launch angle, spin, carry) falls back to the usual estimates.
+    """
+    if request.remote_addr not in _LOCAL_ADDRESSES:
+        return jsonify({"error": "Measured shots are accepted from this device only"}), 403
+    if not isinstance(monitor, MockLaunchMonitor):
+        return jsonify({"error": "Measured shots are accepted only in --mock mode"}), 409
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Send a JSON object"}), 400
+    try:
+        ball_speed = _measured_number(
+            payload, "ball_speed_mph", _MEASURED_BALL_SPEED_MPH, required=True
+        )
+        launch = _measured_number(
+            payload, "launch_angle_vertical", _MEASURED_LAUNCH_DEG, required=False
+        )
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+    shot = Shot(
+        ball_speed_mph=ball_speed,
+        timestamp=datetime.now(),
+        club=monitor.current_club,
+        mode=MEASURED_SHOT_MODE,
+    )
+    if launch is not None:
+        shot.launch_angle_vertical = launch
+        shot.launch_angle_vertical_source = "radar"
+        shot.angle_source = "radar"
+    monitor.record_measured_shot(shot)
+    return jsonify({"shot_number": shot.shot_number, "ball_speed_mph": shot.ball_speed_mph}), 201
+
+
 @app.route("/api/shots/stream")
 def shots_stream():
     """Stream completed shots to phones as Server-Sent Events.
@@ -4833,6 +4898,23 @@ class MockLaunchMonitor:
     def set_club(self, club: ClubType):
         """Set the current club for future shots."""
         self._current_club = club
+
+    @property
+    def current_club(self) -> ClubType:
+        """Club selected for the next shot."""
+        return self._current_club
+
+    def record_measured_shot(self, shot: Shot) -> Shot:
+        """Publish a shot measured outside the OPS path, like a simulated one.
+
+        Before the OPS243 is fitted, the camera-triggered TI radar recorder
+        measures real swings. They join this session's history and stats and go
+        through the same shot callback as simulated shots.
+        """
+        self._shots.append(shot)
+        if self._shot_callback:
+            self._shot_callback(shot)
+        return shot
 
 
 class _MockSwingRadar:

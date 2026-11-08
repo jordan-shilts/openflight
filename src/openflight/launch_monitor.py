@@ -211,7 +211,8 @@ class Shot:
         spin_rejection_reason: Why spin was withheld, if it was rejected
         carry_spin_adjusted: Carry distance adjusted for spin (yards); 0 for a putt
         roll_distance_ft: Putt roll on a flat green (feet), set instead of a flight
-        mode: Shot source — "streaming", "rolling-buffer", or "mock"
+        mode: Shot source — "streaming", "rolling-buffer", "mock", or "radar-only"
+            (TI radar measured without an OPS243; see /api/shots/measured)
         readings_data: Serialized readings for session logging
         camera_replay: Public replay metadata for a matched high-speed capture
     """

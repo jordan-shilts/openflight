@@ -4861,6 +4861,136 @@ class TestCameraPreviewInMockMode:
         assert shot.camera_replay is None
 
 
+class TestMeasuredShots:
+    """Before the OPS243 is fitted, the camera-triggered TI radar recorder posts
+    each measured swing to /api/shots/measured so it shows on the kiosk. Only
+    the Pi itself may post, only in --mock, and only plausible numbers."""
+
+    @staticmethod
+    def _mock_monitor(monkeypatch, club=ClubType.IRON_7):
+        recorded = []
+        mock = server_module.MockLaunchMonitor()
+        mock.set_club(club)
+        mock.start(shot_callback=recorded.append)
+        monkeypatch.setattr(server_module, "monitor", mock)
+        return mock, recorded
+
+    @staticmethod
+    def _post(payload, remote_addr="127.0.0.1"):
+        client = server_module.app.test_client()
+        return client.post(
+            "/api/shots/measured",
+            json=payload,
+            environ_base={"REMOTE_ADDR": remote_addr},
+        )
+
+    def test_a_measured_ball_speed_becomes_a_shot_for_the_selected_club(self, monkeypatch):
+        mock, recorded = self._mock_monitor(monkeypatch)
+
+        response = self._post({"ball_speed_mph": 118.2})
+
+        assert response.status_code == 201
+        assert response.get_json()["ball_speed_mph"] == pytest.approx(118.2)
+        [shot] = recorded
+        assert shot.ball_speed_mph == pytest.approx(118.2)
+        assert shot.club is ClubType.IRON_7
+        assert shot.mode == server_module.MEASURED_SHOT_MODE
+        # Nothing measured the angle, so the usual estimate fills it later.
+        assert shot.launch_angle_vertical is None
+        assert shot.angle_source is None
+        # It joins the session like any shot, for history and stats.
+        assert mock.get_shots() == [shot]
+
+    def test_a_measured_launch_angle_is_kept_as_a_radar_measurement(self, monkeypatch):
+        _mock, recorded = self._mock_monitor(monkeypatch)
+
+        assert self._post({"ball_speed_mph": 110, "launch_angle_vertical": 17.5}).status_code == 201
+
+        [shot] = recorded
+        assert shot.launch_angle_vertical == pytest.approx(17.5)
+        assert shot.launch_angle_vertical_source == "radar"
+        assert shot.angle_source == "radar"
+        server_module._ensure_user_facing_launch_angles(shot)
+        assert shot.launch_angle_vertical == pytest.approx(17.5)
+        assert shot.angle_source == "radar"
+
+    def test_a_missing_angle_is_estimated_not_invented_as_measured(self, monkeypatch):
+        _mock, recorded = self._mock_monitor(monkeypatch)
+        self._post({"ball_speed_mph": 110})
+
+        [shot] = recorded
+        server_module._ensure_user_facing_launch_angles(shot)
+
+        assert shot.launch_angle_vertical is not None
+        assert shot.angle_source == "estimated"
+        assert shot.launch_angle_vertical_source == "estimated"
+
+    @pytest.mark.parametrize("remote", ["10.0.0.42", "192.168.1.20"])
+    def test_other_devices_cannot_post_shots(self, monkeypatch, remote):
+        _mock, recorded = self._mock_monitor(monkeypatch)
+
+        response = self._post({"ball_speed_mph": 110}, remote_addr=remote)
+
+        assert response.status_code == 403
+        assert recorded == []
+
+    def test_ipv6_loopback_counts_as_this_device(self, monkeypatch):
+        _mock, recorded = self._mock_monitor(monkeypatch)
+
+        assert self._post({"ball_speed_mph": 110}, remote_addr="::1").status_code == 201
+        assert len(recorded) == 1
+
+    def test_a_real_radar_session_refuses_a_second_shot_source(self, monkeypatch):
+        monkeypatch.setattr(server_module, "monitor", SimpleNamespace(current_club=ClubType.IRON_7))
+
+        response = self._post({"ball_speed_mph": 110})
+
+        assert response.status_code == 409
+        assert "--mock" in response.get_json()["error"]
+
+    @pytest.mark.parametrize(
+        ("payload", "message"),
+        [
+            ({}, "ball_speed_mph is required"),
+            ({"ball_speed_mph": None}, "ball_speed_mph is required"),
+            ({"ball_speed_mph": "118"}, "ball_speed_mph must be a number"),
+            ({"ball_speed_mph": True}, "ball_speed_mph must be a number"),
+            ({"ball_speed_mph": float("nan")}, "ball_speed_mph must be a number"),
+            ({"ball_speed_mph": 0}, "ball_speed_mph must be between"),
+            ({"ball_speed_mph": 4.9}, "ball_speed_mph must be between"),
+            ({"ball_speed_mph": 251}, "ball_speed_mph must be between"),
+            ({"ball_speed_mph": 110, "launch_angle_vertical": "high"}, "must be a number"),
+            ({"ball_speed_mph": 110, "launch_angle_vertical": 81}, "must be between"),
+            ({"ball_speed_mph": 110, "launch_angle_vertical": -31}, "must be between"),
+        ],
+    )
+    def test_implausible_or_malformed_numbers_are_refused(self, monkeypatch, payload, message):
+        _mock, recorded = self._mock_monitor(monkeypatch)
+
+        response = self._post(payload)
+
+        assert response.status_code == 400
+        assert message in response.get_json()["error"]
+        assert recorded == []
+
+    @pytest.mark.parametrize("body", ["[110]", "118.2", "not json"])
+    def test_a_body_that_is_not_a_json_object_is_refused(self, monkeypatch, body):
+        _mock, recorded = self._mock_monitor(monkeypatch)
+        client = server_module.app.test_client()
+
+        response = client.post("/api/shots/measured", data=body, content_type="application/json")
+
+        assert response.status_code == 400
+        assert recorded == []
+
+    def test_the_boundary_speeds_are_accepted(self, monkeypatch):
+        _mock, recorded = self._mock_monitor(monkeypatch)
+
+        assert self._post({"ball_speed_mph": 5}).status_code == 201
+        assert self._post({"ball_speed_mph": 250}).status_code == 201
+        assert [shot.ball_speed_mph for shot in recorded] == [5.0, 250.0]
+
+
 class TestOpsBaudValidation:
     """The radar can only move to a rate it has an ``In`` API command for, so an
     unsupported --ops-baud is refused by the hardware and leaves the link at
