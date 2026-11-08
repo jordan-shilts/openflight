@@ -20,11 +20,13 @@ prints what the trigger sees once a second, for tuning --min-fraction.
 from __future__ import annotations
 
 import argparse
+import json
 import queue
 import sys
 import threading
 import time
 from pathlib import Path
+from typing import Callable
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "src"))
@@ -79,7 +81,37 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         default=Path.home() / "openflight_sessions" / "camera_motion",
     )
-    return parser.parse_args(argv)
+    radar = parser.add_argument_group(
+        "TI IWR6843 angle radar",
+        "Each camera trigger also freezes the radar ring; the radar-only pipeline "
+        "then reports ball speed from the range walk and, with --tee-m, launch angle.",
+    )
+    radar.add_argument("--iwr6843", action="store_true", help="Capture the TI radar on triggers")
+    radar.add_argument("--iwr6843-port", default=None, help="TI CLI port (default: detect)")
+    radar.add_argument(
+        "--iwr6843-config",
+        type=Path,
+        default=REPO_ROOT / "config" / "iwr6843_l3dump_wide_24f3ms_53bin_iq16.cfg",
+    )
+    radar.add_argument(
+        "--iwr6843-cal",
+        type=Path,
+        default=REPO_ROOT / "config" / "iwr6843_calibration_reference.json",
+    )
+    radar.add_argument("--tee-m", type=float, default=None, help="Radar-to-ball slant range")
+    radar.add_argument("--net-m", type=float, default=None, help="Radar-to-net range")
+    radar.add_argument("--radar-height-m", type=float, default=None)
+    radar.add_argument("--ball-height-m", type=float, default=None)
+    radar.add_argument("--tilt-deg", type=float, default=None, help="Radar mount tilt")
+    radar.add_argument("--club", default=None, help='Club in play, e.g. "7i" or "driver"')
+    args = parser.parse_args(argv)
+    for name in ("tee_m", "net_m", "radar_height_m"):
+        value = getattr(args, name)
+        if value is not None and value <= 0:
+            parser.error(f"--{name.replace('_', '-')} must be positive")
+    if args.ball_height_m is not None and args.ball_height_m < 0:
+        parser.error("--ball-height-m cannot be negative")
+    return args
 
 
 def zone_box(shape: tuple[int, ...], roi: tuple[float, float, float, float]) -> tuple[int, ...]:
@@ -146,7 +178,16 @@ def save_contact_sheet(clip_dir: Path, roi, columns: int = 4, rows: int = 3) -> 
 class TriggerWorker(threading.Thread):
     """Feeds camera frames to the motion trigger off the camera thread."""
 
-    def __init__(self, runtime, trigger: MotionTrigger, *, roi, outdir: Path, calibrate: bool):
+    def __init__(
+        self,
+        runtime,
+        trigger: MotionTrigger,
+        *,
+        roi,
+        outdir: Path,
+        calibrate: bool,
+        on_trigger: Callable[[float], object] | None = None,
+    ):
         super().__init__(name="motion-trigger", daemon=True)
         self.frames: queue.Queue[np.ndarray] = queue.Queue(maxsize=256)
         self.runtime = runtime
@@ -154,6 +195,7 @@ class TriggerWorker(threading.Thread):
         self.roi = roi
         self.outdir = outdir
         self.calibrate = calibrate
+        self.on_trigger = on_trigger
         self.dropped = 0
         self.triggers = 0
         self.stop_event = threading.Event()
@@ -186,6 +228,9 @@ class TriggerWorker(threading.Thread):
             last = sample
             peak = max(peak, sample.fraction)
             if sample.triggered:
+                # Freeze the radar first: its ring is only ~72 ms long.
+                if self.on_trigger is not None:
+                    self.on_trigger(time.time())
                 if self.runtime.notify_trigger():
                     self.triggers += 1
                     print(f"TRIGGER #{self.triggers}: {sample.fraction:.1%} of the zone changed")
@@ -200,6 +245,117 @@ class TriggerWorker(threading.Thread):
                     f"{'armed' if last.armed else 'not armed'} | dropped {self.dropped}"
                 )
                 window_start, seen, peak = now, 0, 0.0
+
+
+class NoTriggerInput:
+    """Stands in for the BCM17 sound-trigger input: the camera triggers the radar."""
+
+    when_pressed = None
+
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def close(self) -> None:
+        """Nothing to release."""
+
+
+def radar_line(measurement, *, launch_trusted: bool) -> str:
+    """One line per swing; launch angle only when the tee range was measured."""
+    if not measurement.ball_found or measurement.track is None:
+        return "no ball in the radar data"
+    track = measurement.track
+    speed = measurement.ball_speed_corrected_mph or measurement.ball_speed_mph
+    parts = [f"ball {speed:.1f} mph", f"({track.n_inliers} points, quality {measurement.quality})"]
+    angle = measurement.launch_angle_deg
+    if angle is not None and launch_trusted:
+        parts.insert(1, f"launch {angle:.1f} deg")
+    elif angle is not None:
+        parts.append("launch needs --tee-m")
+    if track.low_confidence:
+        parts.append("LOW CONFIDENCE")
+    return ", ".join(parts)
+
+
+class RadarWorker(threading.Thread):
+    """Analyze each TI dump with the radar-only pipeline as it arrives."""
+
+    def __init__(self, monitor, calibration, *, args: argparse.Namespace, outdir: Path):
+        super().__init__(name="radar-results", daemon=True)
+        from openflight.iwr6843.monitor import (  # pylint: disable=import-outside-toplevel
+            tx_order_from_config,
+        )
+
+        self.monitor = monitor
+        self.calibration = calibration
+        self.args = args
+        self.tx_order = tx_order_from_config(args.iwr6843_config)
+        self.results_path = outdir / "radar.jsonl"
+        self.stop_event = threading.Event()
+
+    def run(self) -> None:
+        while not self.stop_event.is_set():
+            capture = self.monitor.capture_for_shot(None, timeout_s=0.5)
+            if capture is not None:
+                self.handle(capture)
+
+    def handle(self, capture) -> None:
+        """Print and log one capture's result."""
+        from openflight.iwr6843.shot import process_dump  # pylint: disable=import-outside-toplevel
+
+        record = {
+            "sequence": capture.sequence,
+            "trigger_timestamp": capture.trigger_timestamp,
+            "dump_s": round(capture.dump_duration_s, 2),
+            "dump_path": str(capture.path) if capture.path else None,
+            "tee_m": self.args.tee_m,
+            "club": self.args.club,
+        }
+        if not capture.valid:
+            print(f"RADAR #{capture.sequence}: capture failed: {capture.error}")
+            record["error"] = capture.error
+        else:
+            try:
+                measurement = process_dump(
+                    capture.raw,
+                    self.calibration,
+                    club=self.args.club,
+                    net_range_m=self.args.net_m,
+                    tx_order=self.tx_order,
+                )
+            except Exception as error:  # pylint: disable=broad-exception-caught
+                print(f"RADAR #{capture.sequence}: analysis failed: {error}")
+                record["error"] = f"analysis: {error}"
+            else:
+                line = radar_line(measurement, launch_trusted=self.args.tee_m is not None)
+                print(f"RADAR #{capture.sequence}: {line}")
+                record.update(measurement.to_dict())
+        with self.results_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, default=str) + "\n")
+
+
+def start_radar(args: argparse.Namespace, session_dir: Path):
+    """Configure the TI radar for software triggers; return (monitor, calibration)."""
+    # pylint: disable=import-outside-toplevel
+    from openflight.iwr6843.calibration import Calibration
+    from openflight.iwr6843.calibration_session import clone_calibration
+    from openflight.iwr6843.monitor import IWR6843CaptureMonitor
+
+    calibration = clone_calibration(
+        Calibration.load(str(args.iwr6843_cal)),
+        tee_range_m=args.tee_m,
+        tilt_deg=args.tilt_deg,
+        radar_height_m=args.radar_height_m,
+        ball_height_m=args.ball_height_m,
+    )
+    monitor = IWR6843CaptureMonitor(
+        config_path=args.iwr6843_config,
+        output_dir=session_dir / "iwr6843",
+        port=args.iwr6843_port,
+        button_factory=NoTriggerInput,
+        save_dumps=True,
+    )
+    monitor.start(armed=True)
+    return monitor, calibration
 
 
 def describe(capture) -> str:
@@ -235,6 +391,12 @@ def main(argv: list[str] | None = None) -> int:
             cooldown_s=args.cooldown,
         )
     )
+    radar_monitor = radar_worker = None
+    if args.iwr6843:
+        radar_monitor, calibration = start_radar(args, session_dir)
+        radar_worker = RadarWorker(radar_monitor, calibration, args=args, outdir=session_dir)
+        geometry = "no --tee-m: ball speed only" if args.tee_m is None else f"tee {args.tee_m} m"
+        print(f"TI radar armed on {radar_monitor.port} ({geometry})")
     worker_holder: dict[str, TriggerWorker] = {}
     runtime = CameraCaptureRuntime(
         output_dir=session_dir,
@@ -243,10 +405,17 @@ def main(argv: list[str] | None = None) -> int:
         frame_listener=lambda frame: worker_holder["worker"].listen(frame),
     )
     worker = TriggerWorker(
-        runtime, trigger, roi=args.roi, outdir=session_dir, calibrate=args.calibrate
+        runtime,
+        trigger,
+        roi=args.roi,
+        outdir=session_dir,
+        calibrate=args.calibrate,
+        on_trigger=radar_monitor.notify_trigger if radar_monitor else None,
     )
     worker_holder["worker"] = worker
 
+    if radar_worker is not None:
+        radar_worker.start()
     runtime.start()
     status = runtime.auto_exposure_status()
     print(
@@ -279,6 +448,11 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         worker.stop_event.set()
         runtime.stop()
+        if radar_worker is not None:
+            radar_worker.stop_event.set()
+            radar_worker.join(timeout=2.0)
+        if radar_monitor is not None:
+            radar_monitor.stop()
     print(f"{saved} clip(s), {worker.triggers} trigger(s), {worker.dropped} frame(s) dropped")
     return 0
 
