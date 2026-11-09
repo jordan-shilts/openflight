@@ -15,7 +15,7 @@ import sys
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass, fields, replace
+from dataclasses import asdict, dataclass, fields, replace
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -67,6 +67,7 @@ from .phone_orientation import (
 )
 from .power import SUPPORTED_BATTERY_PROVIDERS, PowerMonitor, PowerStatus
 from .profiles import ProfileStore
+from .rig_setup import RigSetupError, RigSetupStore
 from .rolling_buffer.monitor import estimate_carry_with_spin, get_optimal_spin_for_ball_speed
 from .session_logger import get_session_logger, init_session_logger, log_session_error
 from .shot_stream import SSE_MIMETYPE, ShotStreamBroker, ShotStreamFull
@@ -118,6 +119,17 @@ def get_profile_store() -> ProfileStore:
     if profile_store is None:
         profile_store = ProfileStore()
     return profile_store
+
+
+rig_setup_store: RigSetupStore | None = None
+
+
+def get_rig_setup_store() -> RigSetupStore:
+    """Saved rig setups. Single source of truth for where the ball is."""
+    global rig_setup_store  # pylint: disable=global-statement
+    if rig_setup_store is None:
+        rig_setup_store = RigSetupStore(Path.home() / ".config" / "openflight" / "rig-setups.json")
+    return rig_setup_store
 
 
 TRAINING_IMPLEMENT_LABELS = {
@@ -1941,6 +1953,89 @@ def post_measured_shot():
         _apply_radar_launch(shot, launch)
     monitor.record_measured_shot(shot)
     return jsonify({"shot_number": shot.shot_number, "ball_speed_mph": shot.ball_speed_mph}), 201
+
+
+def _apply_rig_setup_to_iwr6843() -> None:
+    """Point the live radar path at the active setup.
+
+    Does nothing until a distance exists, so a rig that has never been set up
+    keeps the geometry from its command line.
+    """
+    global ball_speed_correction_distance_ft  # pylint: disable=global-statement
+    global ball_speed_correction_ball_above_radar_ft  # pylint: disable=global-statement
+
+    if iwr6843_runtime is None:
+        return
+    geometry = get_rig_setup_store().geometry()
+    if geometry.tee_range_m is None:
+        return
+    from .iwr6843.calibration_session import (  # pylint: disable=import-outside-toplevel
+        clone_calibration,
+    )
+
+    iwr6843_runtime.calibration = clone_calibration(
+        iwr6843_runtime.calibration,
+        tee_range_m=geometry.tee_range_m,
+        radar_height_m=geometry.radar_height_m,
+        ball_height_m=geometry.ball_height_m,
+    )
+    iwr6843_runtime.net_range_m = geometry.net_range_m
+    ball_speed_correction_distance_ft = geometry.tee_range_m * 3.28084
+    ball_speed_correction_ball_above_radar_ft = (
+        geometry.ball_height_m - geometry.radar_height_m
+    ) * 3.28084
+
+
+def _publish_rig_setup() -> None:
+    """Bring the radar path and every open screen up to date with the store."""
+    _apply_rig_setup_to_iwr6843()
+    socketio.emit("rig_setup", get_rig_setup_store().snapshot())
+
+
+def _observe_camera_ball(camera_capture) -> None:
+    """Measure the ball in this shot's clip so the next shot uses its distance."""
+    if camera_capture is None or not camera_capture.valid or not camera_capture.path:
+        return
+    from .camera.ball_size import measure_ball_in_clip  # pylint: disable=import-outside-toplevel
+
+    ball = measure_ball_in_clip(camera_capture.path)
+    if ball is None:
+        return
+    get_rig_setup_store().observe(diameter_px=ball.diameter_px)
+    _publish_rig_setup()
+
+
+@app.route("/api/rig-setup", methods=["GET", "POST"])
+def api_rig_setup():
+    """Read or change the saved setups (the touchscreen's Setup panel)."""
+    store = get_rig_setup_store()
+    if request.method == "GET":
+        return jsonify(store.snapshot())
+    try:
+        store.update(request.get_json(silent=True))
+    except RigSetupError as error:
+        return jsonify({"error": str(error)}), 400
+    _publish_rig_setup()
+    return jsonify(store.snapshot())
+
+
+@app.route("/api/rig-setup/observation", methods=["POST"])
+def api_rig_setup_observation():
+    """Take a swing's camera and tilt readings; return that swing's geometry.
+
+    Only the Pi itself may post, so a LAN client cannot teach the lens scale.
+    """
+    if request.remote_addr not in _LOCAL_ADDRESSES:
+        return jsonify({"error": "Observations are accepted from this device only"}), 403
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Send a JSON object"}), 400
+    geometry = get_rig_setup_store().observe(
+        diameter_px=payload.get("diameter_px"),
+        pitch_deg=payload.get("pitch_deg"),
+    )
+    _publish_rig_setup()
+    return jsonify(asdict(geometry))
 
 
 @app.route("/api/shots/stream")
@@ -3787,6 +3882,7 @@ def _enrich_shot_from_optional_hardware(shot: Shot) -> _ShotEnrichmentResult:
         )
 
     _attach_camera_replay(shot, camera_capture)
+    _observe_camera_ball(camera_capture)
 
     if shot.mode != "mock":
         camera_analysis_ms = _fuse_camera_measurements(shot, camera_capture)
@@ -5879,6 +5975,7 @@ def main():
             )
             if args.debug:
                 print(f"IWR6843 raw dumps enabled: {iwr_output_dir}")
+            _apply_rig_setup_to_iwr6843()
             startup_status.ready("ti", "TI radar connected")
         else:
             startup_status.error(
