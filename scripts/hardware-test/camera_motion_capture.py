@@ -15,6 +15,10 @@ Each clip directory gets frames.npz (the shot-capture format) and sheet.jpg,
 the frames around the biggest change with the hitting zone outlined. aim.jpg,
 saved at start, shows the first frame and the zone for aiming. --calibrate
 prints what the trigger sees once a second, for tuning --min-fraction.
+
+With --iwr6843 each trigger also captures the TI radar. --rig-setup-url follows the
+kiosk's Setup tab on every swing: the ball's apparent size and the case tilt go to
+the kiosk, and the geometry for that swing comes back.
 """
 
 from __future__ import annotations

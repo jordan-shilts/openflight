@@ -91,6 +91,44 @@ def test_the_club_passing_through_does_not_disturb_the_measurement():
     assert ball.diameter_px == pytest.approx(15.0, abs=0.35)
 
 
+def test_a_bright_patch_that_slowly_dims_is_not_a_ball():
+    """From a real clip: light drifting off a patch for 60 frames passed every shape test."""
+    yy, xx = np.mgrid[0:HEIGHT, 0:WIDTH]
+    patch = (xx - 300) ** 2 + (yy - 250) ** 2 <= 7.5**2
+
+    def fade(frame, index):
+        frame[patch] = 227.0 - index * 0.5
+
+    frames = clip(leaves=False, ball=30.0, edit_all=fade)
+
+    assert measure_ball_before_impact(frames, trigger_frame_index=TRIGGER) is None
+
+
+@pytest.mark.parametrize(("cx", "cy"), [(630.0, 200.0), (10.0, 200.0), (320.0, 30.0)])
+def test_something_at_the_edge_of_the_frame_is_not_the_ball(cx, cy):
+    coverage = disc_mask(15.0, cx=cx, cy=cy)
+    before = 30.0 * (1.0 - coverage) + 160.0 * coverage
+    frames = np.stack(
+        [before if index <= TRIGGER else np.full_like(before, 30.0) for index in range(FRAMES)]
+    )
+
+    assert measure_ball_before_impact(frames.astype(np.uint8), trigger_frame_index=TRIGGER) is None
+
+
+def test_a_slow_fade_elsewhere_does_not_hide_the_real_ball():
+    yy, xx = np.mgrid[0:HEIGHT, 0:WIDTH]
+    patch = (xx - 200) ** 2 + (yy - 300) ** 2 <= 9.0**2
+
+    def fade(frame, index):
+        frame[patch] = 240.0 - index * 1.5  # stronger than the ball, but gradual
+
+    ball = measure_ball_before_impact(clip(15.0, edit_all=fade), trigger_frame_index=TRIGGER)
+
+    assert ball is not None
+    assert ball.diameter_px == pytest.approx(15.0, abs=0.35)
+    assert ball.x == pytest.approx(416.0, abs=1.0)
+
+
 def test_a_ball_that_never_left_is_not_measured():
     assert measure_ball_before_impact(clip(leaves=False), trigger_frame_index=TRIGGER) is None
 
@@ -100,11 +138,9 @@ def test_something_large_leaving_is_not_a_ball():
         frame[250:330, 200:380] = 150.0
         return frame
 
-    frames = clip(leaves=False)
     moved = clip(leaves=True, ball=30.0, edit_before=foot)
 
     assert measure_ball_before_impact(moved, trigger_frame_index=TRIGGER) is None
-    assert frames is not None
 
 
 def test_a_thin_streak_leaving_is_not_a_ball():

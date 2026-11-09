@@ -119,7 +119,7 @@ describe('PanelFooter', () => {
     expect(html).toContain('panel-footer__nav');
     expect(html).toContain('panel-footer__tabs');
     expect(html).toContain('aria-label="Panels"');
-    expect(html.match(/panel-header__divider/g)).toHaveLength(6);
+    expect(html.match(/panel-header__divider/g)).toHaveLength(7);
   });
 });
 

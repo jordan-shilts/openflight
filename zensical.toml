@@ -62,6 +62,7 @@ nav = [
     "using/running.md",
     "using/display.md",
     "using/swing-speed.md",
+    "using/rig-setup.md",
     { "Simulator connectors" = [
       "using/simulator/index.md",
       "using/simulator/gspro.md",

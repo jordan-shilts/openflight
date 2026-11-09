@@ -358,7 +358,8 @@ class RigSetupStore:
                     sample = float(diameter_px) * setup.ball_distance_m
                     self._scale_samples = [*self._scale_samples, sample][-MAX_SAMPLES:]
                     changed = True
-                elif setup.auto_distance and scale is not None:
+                elif scale is not None:
+                    # Measured even while adjusted by hand, so Auto has it at once.
                     distance = scale / float(diameter_px)
                     if _within(distance, CAMERA_DISTANCE_LIMITS_M):
                         self._camera_distance_m = round(distance, 4)

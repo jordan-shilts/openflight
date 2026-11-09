@@ -133,6 +133,17 @@ def test_adjusting_by_hand_leaves_auto_and_auto_comes_back(store):
     assert store.geometry().ball_distance_m == pytest.approx(2.1)
 
 
+def test_a_swing_hit_while_adjusted_by_hand_is_ready_when_auto_is_tapped(store):
+    taped(store, distance=1.4, width=15.0)
+    store.update({"active": COURSE, "setup": COURSE, "ball_distance_m": 2.2})
+
+    assert store.observe(diameter_px=10.0).ball_distance_m == pytest.approx(2.2)
+
+    store.update({"setup": COURSE, "auto_distance": True})
+    assert store.geometry().distance_source == "camera"
+    assert store.geometry().ball_distance_m == pytest.approx(2.1)
+
+
 def test_switching_location_forgets_where_the_last_ball_was(store):
     taped(store)
     store.update({"active": COURSE})

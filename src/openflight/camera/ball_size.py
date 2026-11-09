@@ -32,6 +32,10 @@ MAX_SIDE_PX = 42
 MIN_FILL = 0.55  # a disc fills pi/4 = 0.785 of its bounding box
 MAX_ASPECT = 1.7
 ROW_SPAN = 3  # rows either side of the widest one
+EDGE_MARGIN_X = 0.08  # fractions of the frame where a resting ball can't usefully be
+EDGE_MARGIN_TOP = 0.15
+EDGE_MARGIN_BOTTOM = 0.03
+MAX_DEPARTURE_FRAMES = 6  # a struck ball is gone in a frame or two; a shadow drifts
 
 
 @dataclass(frozen=True)
@@ -84,9 +88,35 @@ def _diameter_from_chords(chords: list[tuple[int, float]]) -> float:
     return diameter if widest - 0.5 <= diameter <= widest * 1.2 else widest
 
 
+def _left_suddenly(frames: np.ndarray, box: tuple[slice, slice], after_start: int) -> bool:
+    """Whether this spot went from "there" to "gone" in a few frames.
+
+    A real clip showed why: light slowly drifting off a bright patch passes every
+    shape test, but it takes the whole clip to fade.
+    """
+    rows, columns = box
+    level = frames[:, rows, columns].mean(axis=(1, 2)).astype(np.float64)
+    high = float(np.median(level[:BEFORE_FRAMES]))
+    low = float(np.median(level[after_start : after_start + AFTER_FRAMES]))
+    span = high - low
+    if span <= 0.0:
+        return False
+    still_there = np.flatnonzero(level >= high - 0.25 * span)
+    if len(still_there) == 0:
+        return False
+    last_there = int(still_there[-1])
+    gone = np.flatnonzero(level[last_there:] <= low + 0.25 * span)
+    return len(gone) > 0 and int(gone[0]) <= MAX_DEPARTURE_FRAMES
+
+
 def _candidates(signal: np.ndarray) -> list[tuple[float, tuple[slice, slice]]]:
     noise = 1.4826 * float(np.median(np.abs(signal - np.median(signal))))
     mask = signal >= max(MIN_CONTRAST, NOISE_K * noise)
+    height_px, width_px = signal.shape
+    mask[: int(height_px * EDGE_MARGIN_TOP)] = False
+    mask[height_px - int(height_px * EDGE_MARGIN_BOTTOM) :] = False
+    mask[:, : int(width_px * EDGE_MARGIN_X)] = False
+    mask[:, width_px - int(width_px * EDGE_MARGIN_X) :] = False
     labels, _count = ndimage.label(mask)
     found = []
     for index, box in enumerate(ndimage.find_objects(labels), start=1):
@@ -126,10 +156,11 @@ def measure_ball_before_impact(
     after = np.median(frames[after_start : after_start + AFTER_FRAMES], axis=0).astype(np.float32)
     signal = ndimage.gaussian_filter(before - after, sigma=0.6)
 
-    candidates = _candidates(signal)
-    if not candidates:
+    departures = sorted(_candidates(signal), key=lambda item: item[0], reverse=True)
+    best = next((item for item in departures if _left_suddenly(frames, item[1], after_start)), None)
+    if best is None:
         return None
-    contrast, (rows, columns) = max(candidates, key=lambda item: item[0])
+    contrast, (rows, columns) = best
 
     margin = 4
     top = max(0, rows.start - margin)

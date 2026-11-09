@@ -17,6 +17,7 @@ import { ShutdownDialog, type ShutdownState } from './components/ShutdownDialog'
 import { CameraReplayDialog } from './components/CameraReplayDialog';
 import {
   CameraPanel,
+  SetupPanel,
   LivePanel,
   LiveViewToggle,
   ProfileNameDialog,
@@ -403,6 +404,7 @@ function AppContent() {
             onUpdateCaptureSettings={(settings) => socketService.setCameraCaptureSettings(settings)}
           />
         )}
+        {currentView === 'setup' && <SetupPanel />}
         {currentView === 'debug' && (
           <div className="panel">
             <PanelHeader
