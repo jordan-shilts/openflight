@@ -50,9 +50,29 @@ in Simulator.
 Ball height assumes the ball is on the ground or a mat, so a teed ball reads
 slightly off.
 
+## Straight line
+
+Sideways launch needs to know which way is straight. Until that is set, the
+H. launch tile stays empty.
+
+1. Aim the case at your target.
+2. Hit at least three shots at the target. Five is better.
+3. On the **Setup** tab, press **Set** beside **Straight line**.
+
+The average start line of your last five shots becomes zero, and it is saved.
+Press **Set** again after moving the case in the simulator, or **Clear** to go
+back to no sideways reading. The careful way to set it is with shots you can
+see start on the line, such as putts rolled along a string.
+
+The radar sits a hand's width above the floor, so it hears each ball twice:
+directly, and off the floor. The recorder's default sideways method
+(`--horizontal-method colocated`) compares only antenna positions that hear
+both paths the same way, and reads the flight out to 3.4 m, before the net.
+
 ## Ready and Measuring
 
-Reading the radar after a swing takes about seven seconds, and a swing made
+Reading the radar after a swing takes about two and a half seconds with the
+recorder's default capture profile (seven with the full one), and a swing made
 during that read is not measured. With the camera-triggered recorder running,
 the Live screen shows a line under the header:
 
@@ -68,3 +88,18 @@ smash, spin axis, club path and attack angle return with the OPS243.
 
 The recorder reports its state with `--status-to
 http://127.0.0.1:8080/api/shots/measuring`.
+
+## Capture profiles
+
+The wait is the radar's data crossing a serial cable, so it follows the size of
+the capture. The recorder takes `--iwr6843-config`:
+
+| Profile | Frames and samples | Wait |
+| --- | --- | --- |
+| `iwr6843_l3dump_ball_16f3ms_53bin_iq8.cfg` (default) | Flight frames only, 8-bit | about 2.4 s |
+| `iwr6843_l3dump_ball_16f3ms_53bin_iq16.cfg` | Flight frames only, 16-bit | about 4.7 s |
+| `iwr6843_l3dump_wide_24f3ms_53bin_iq16.cfg` | Everything, 16-bit | about 7.0 s |
+
+The ball profiles drop the frames from before the camera trigger, which hold
+no flight the ball estimators keep. Use the 16-bit ball profile to check
+whether 8-bit samples cost any accuracy on your rig.

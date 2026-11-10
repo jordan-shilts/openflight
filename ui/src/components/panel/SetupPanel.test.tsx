@@ -27,6 +27,7 @@ function snapshot(overrides: Partial<RigSetupSnapshot> = {}): RigSetupSnapshot {
     camera_ready: true,
     scale_samples_needed: 0,
     effective: { ball_distance_m: 1.4, distance_source: 'manual', net_distance_m: 4.6 },
+    straight_line: { set: false, shots: 0, shots_needed: 3 },
     ...overrides,
   };
 }
@@ -134,6 +135,44 @@ describe('SetupPanelView', () => {
     );
 
     expect(html).not.toContain('teach the camera');
+  });
+
+  describe('straight line', () => {
+    const straight = (overrides: Partial<RigSetupSnapshot['straight_line']>) =>
+      snapshot({ straight_line: { set: false, shots: 0, shots_needed: 3, ...overrides } });
+    const setButton = (html: string) => html.match(/<button[^>]*setup-panel__button[^>]*>Set</)?.[0] ?? '';
+
+    it('asks for shots at the target before it can be set', () => {
+      const html = render(straight({ shots: 1, shots_needed: 2 }));
+
+      expect(html).toContain('Straight line');
+      expect(html).toContain('Hit 2 more at your target');
+      expect(setButton(html)).toContain('disabled');
+      expect(html).not.toContain('>Clear<');
+    });
+
+    it('lets Set be pressed once enough shots are in', () => {
+      const html = render(straight({ shots: 3, shots_needed: 0 }));
+
+      expect(html).toContain('Press Set after shots hit straight');
+      expect(setButton(html)).not.toContain('disabled');
+    });
+
+    it('says when it is set and offers Clear', () => {
+      const html = render(straight({ set: true, shots: 5, shots_needed: 0 }));
+
+      expect(html).toContain('Set from your shots');
+      expect(html).toContain('>Clear<');
+      expect(setButton(html)).not.toContain('disabled');
+    });
+
+    it('keeps Set disabled after a restart until new shots arrive', () => {
+      const html = render(straight({ set: true, shots: 0, shots_needed: 3 }));
+
+      expect(html).toContain('Set from your shots');
+      expect(setButton(html)).toContain('disabled');
+      expect(html).toContain('>Clear<');
+    });
   });
 
   it('says so when a change did not save', () => {

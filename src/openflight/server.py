@@ -1889,6 +1889,7 @@ _MEASURED_LAUNCH_DEG = (-30.0, 80.0)
 _MEASURED_HORIZONTAL_DEG = (-45.0, 45.0)
 _MEASURED_COMPONENT_STD_DEG = (0.0, 90.0)
 _MEASURED_COHERENCE = (0.0, 1.0)
+_MEASURED_PHASE_RAD = (-math.pi, math.pi)
 _LOCAL_ADDRESSES = frozenset({"127.0.0.1", "::1"})
 
 
@@ -2003,6 +2004,9 @@ def post_measured_shot():
             payload, "ball_speed_mph", _MEASURED_BALL_SPEED_MPH, required=True
         )
         launch = _measured_launch(payload)
+        horizontal_phase = _measured_number(
+            payload, "horizontal_phase_rad", _MEASURED_PHASE_RAD, required=False
+        )
     except ValueError as error:
         return jsonify({"error": str(error)}), 400
 
@@ -2015,6 +2019,10 @@ def post_measured_shot():
     if launch is not None:
         _apply_radar_launch(shot, launch)
     monitor.record_measured_shot(shot)
+    if horizontal_phase is not None:
+        # The start line before any zero: what Setup's "Set straight" averages.
+        get_rig_setup_store().observe_horizontal_phase(horizontal_phase)
+        _publish_rig_setup()
     return jsonify({"shot_number": shot.shot_number, "ball_speed_mph": shot.ball_speed_mph}), 201
 
 

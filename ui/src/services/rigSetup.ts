@@ -9,6 +9,7 @@ export interface RigSetupChange {
   net_enabled?: boolean;
   net_distance_m?: number;
   radar_height_m?: number;
+  straight_line?: 'set' | 'clear';
 }
 
 const rigSetupUrl = () => `${getServerOrigin()}/api/rig-setup`;

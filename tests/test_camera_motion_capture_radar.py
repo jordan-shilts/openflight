@@ -32,9 +32,20 @@ def measurement(*, found=True, corrected=101.4, low=False, quality="ok"):
     )
 
 
-def lcmf(*, status="accepted", angle=16.4, std=1.2, single=False, horizontal=-2.3, coherence=0.8):
+def lcmf(
+    *,
+    status="accepted",
+    angle=16.4,
+    std=1.2,
+    single=False,
+    horizontal=-2.3,
+    coherence=0.8,
+    phase=None,
+):
     """An LCMF-v1 result: the live kiosk's launch method."""
     return SimpleNamespace(
+        horizontal_phase_rad=phase,
+        to_dict=lambda: {"status": status},
         status=status,
         accepted=status.startswith("accepted") and angle is not None,
         angle_deg=angle,
@@ -86,11 +97,14 @@ def test_the_stand_in_trigger_input_accepts_the_monitor_calls():
     button.close()
 
 
-def test_radar_options_default_to_the_wide_config_and_reference_calibration():
+def test_radar_options_default_to_the_fast_ball_profile_and_reference_calibration():
     args = recorder.parse_args(["--iwr6843"])
 
     assert args.iwr6843 is True
-    assert args.iwr6843_config.name == "iwr6843_l3dump_wide_24f3ms_53bin_iq16.cfg"
+    assert args.iwr6843_config.name == "iwr6843_l3dump_ball_16f3ms_53bin_iq8.cfg"
+    assert args.iwr6843_config.exists()
+    # Floor reflections defeat the midpoint method on a radar this low.
+    assert args.horizontal_method == "colocated"
     assert args.iwr6843_cal.name == "iwr6843_calibration_reference.json"
     assert args.tee_m is None
 
@@ -235,7 +249,12 @@ def radar_worker(tee_m):
     """A RadarWorker without a radar: only what measure_launch reads."""
     worker = object.__new__(recorder.RadarWorker)
     worker.args = SimpleNamespace(
-        tee_m=tee_m, club="7i", net_m=4.0, club_from=None, rig_setup_url=None
+        tee_m=tee_m,
+        club="7i",
+        net_m=4.0,
+        club_from=None,
+        rig_setup_url=None,
+        horizontal_method="colocated",
     )
     worker.calibration = SimpleNamespace(tee_range_m=tee_m)
     worker.tx_order = "normal"
@@ -271,9 +290,39 @@ def test_launch_is_measured_with_the_radial_track_speed(monkeypatch):
             worker.calibration,
             # The live path feeds LCMF the OPS243's radial speed; the range walk's
             # radial speed (not the cosine-corrected one) stands in for it.
-            {"ball_speed_mph": 99.0, "club": "7-iron", "net_range_m": 4.0, "tx_order": "normal"},
+            {
+                "ball_speed_mph": 99.0,
+                "club": "7-iron",
+                "net_range_m": 4.0,
+                "tx_order": "normal",
+                "horizontal_method": "colocated",
+                "horizontal_phase_reference_rad": None,
+            },
         )
     ]
+
+
+def test_the_rigs_straight_line_and_method_reach_the_estimator(monkeypatch):
+    import openflight.iwr6843.lcmf as lcmf_module
+
+    seen = {}
+    monkeypatch.setattr(
+        lcmf_module, "estimate_lcmf_v1", lambda raw, cal, **kwargs: seen.update(kwargs) or lcmf()
+    )
+    worker = radar_worker(1.4)
+    worker.args.horizontal_method = "midpoint"
+
+    worker.measure_launch(
+        SimpleNamespace(raw=b"dump", sequence=3),
+        measurement(),
+        club="7-iron",
+        calibration=worker.calibration,
+        net_m=4.0,
+        horizontal_zero_rad=-0.82,
+    )
+
+    assert seen["horizontal_method"] == "midpoint"
+    assert seen["horizontal_phase_reference_rad"] == pytest.approx(-0.82)
 
 
 @pytest.mark.parametrize(
@@ -596,7 +645,7 @@ def test_reports_reach_the_kiosk_in_order_with_the_expected_wait():
 
     assert [item["body"] for item in sent] == [
         {"state": "ready"},
-        {"state": "measuring", "expected_s": 7.3},
+        {"state": "measuring", "expected_s": 7.5},
         {"state": "ready", "result": "no_ball"},
     ]
     assert sent[0]["url"] == "http://127.0.0.1:8080/api/shots/measuring"
@@ -610,7 +659,16 @@ def test_the_countdown_follows_the_last_real_dump():
 
     run_until(reporter, sent, 1)
 
-    assert sent[0]["body"] == {"state": "measuring", "expected_s": 5.5}
+    assert sent[0]["body"] == {"state": "measuring", "expected_s": 5.8}
+
+
+def test_the_first_countdown_comes_from_the_capture_profile():
+    reporter, sent = status_reporter(dump_s=2.34)
+    reporter.measuring()
+
+    run_until(reporter, sent, 1)
+
+    assert sent[0]["body"] == {"state": "measuring", "expected_s": 2.8}
 
 
 @pytest.mark.parametrize("dump_s", [0.0, 0.2, 45.0])
@@ -759,3 +817,152 @@ def test_the_status_url_is_optional():
     assert recorder.parse_args([]).status_to is None
     args = recorder.parse_args(["--status-to", "http://127.0.0.1:8080/api/shots/measuring"])
     assert args.status_to == "http://127.0.0.1:8080/api/shots/measuring"
+
+
+# -- horizontal launch and the rig's straight line ------------------------
+
+
+def test_an_unzeroed_horizontal_is_held_back_but_its_phase_goes_along():
+    payload = recorder.shot_payload(
+        measurement(), launch=lcmf(horizontal=15.2, phase=-0.82), horizontal_zeroed=False
+    )
+
+    # About 15 degrees off until the straight line is set, so not shown.
+    assert "launch_angle_horizontal" not in payload
+    assert "horizontal_coherence" not in payload
+    # The kiosk sets that line from the raw phase.
+    assert payload["horizontal_phase_rad"] == pytest.approx(-0.82)
+    assert payload["launch_angle_vertical"] == 16.4
+
+
+def test_a_zeroed_horizontal_is_sent_with_its_phase():
+    payload = recorder.shot_payload(measurement(), launch=lcmf(horizontal=-1.4, phase=-0.79))
+
+    assert payload["launch_angle_horizontal"] == -1.4
+    assert payload["horizontal_phase_rad"] == pytest.approx(-0.79)
+
+
+def test_no_phase_is_sent_without_a_launch():
+    payload = recorder.shot_payload(
+        measurement(), launch=lcmf(status="rejected_track", angle=None, phase=-0.8)
+    )
+
+    assert payload == {"ball_speed_mph": 101.4}
+
+
+def test_the_log_line_does_not_print_an_unzeroed_angle():
+    line = recorder.radar_line(
+        measurement(), launch=lcmf(horizontal=15.2), tee_known=True, horizontal_zeroed=False
+    )
+
+    assert "15.2" not in line
+    assert "straight line is not set" in line
+
+
+def handled_payload(tmp_path, monkeypatch, geometry, launch):
+    """Run one swing through handle() and return what would be posted."""
+    worker, _used = worker_for_handle(tmp_path, geometry, monkeypatch)
+    posted = []
+    worker.args.post_to = "http://kiosk/api/shots/measured"
+    monkeypatch.setattr(worker, "measure_launch", lambda *a, **k: launch)
+    monkeypatch.setattr(recorder, "post_shot", lambda url, payload: posted.append(payload) or "ok")
+    worker.handle(capture_for_handle())
+    return posted[0]
+
+
+def test_a_swing_before_the_straight_line_is_set_shows_no_horizontal(tmp_path, monkeypatch):
+    payload = handled_payload(tmp_path, monkeypatch, GEOMETRY, lcmf(horizontal=15.2, phase=-0.82))
+
+    assert "launch_angle_horizontal" not in payload
+    assert payload["horizontal_phase_rad"] == pytest.approx(-0.82)
+
+
+def test_a_swing_after_the_straight_line_is_set_shows_horizontal(tmp_path, monkeypatch):
+    geometry = {**GEOMETRY, "horizontal_phase_reference_rad": -0.8}
+
+    payload = handled_payload(tmp_path, monkeypatch, geometry, lcmf(horizontal=-1.1, phase=-0.78))
+
+    assert payload["launch_angle_horizontal"] == -1.1
+
+
+def test_the_midpoint_method_needs_no_zero_from_the_kiosk(tmp_path, monkeypatch):
+    worker, _used = worker_for_handle(tmp_path, None, monkeypatch)
+    posted = []
+    worker.args.post_to = "http://kiosk/api/shots/measured"
+    worker.args.horizontal_method = "midpoint"
+    monkeypatch.setattr(worker, "measure_launch", lambda *a, **k: lcmf(horizontal=-2.3))
+    monkeypatch.setattr(recorder, "post_shot", lambda url, payload: posted.append(payload) or "ok")
+
+    worker.handle(capture_for_handle())
+
+    assert posted[0]["launch_angle_horizontal"] == -2.3
+
+
+# -- capture profiles and the wait ----------------------------------------
+
+CONFIG_DIR = SCRIPT.parents[2] / "config"
+
+
+@pytest.mark.parametrize(
+    ("name", "nbytes"),
+    [
+        ("iwr6843_l3dump_wide_24f3ms_53bin_iq16.cfg", 732_672),
+        ("iwr6843_l3dump_dense_36f2ms_53bin_iq8.cfg", 549_504),
+        ("iwr6843_l3dump_ball_16f3ms_53bin_iq16.cfg", 488_448),
+        ("iwr6843_l3dump_ball_16f3ms_53bin_iq8.cfg", 244_224),
+    ],
+)
+def test_the_wait_is_the_profiles_sample_bytes_at_the_uart_rate(name, nbytes):
+    seconds = recorder.dump_seconds_from_config(CONFIG_DIR / name)
+
+    assert seconds == pytest.approx(nbytes * 10 / 1_041_667, rel=1e-6)
+
+
+def test_the_fast_profile_is_a_third_of_the_default_wait():
+    fast = recorder.dump_seconds_from_config(
+        CONFIG_DIR / "iwr6843_l3dump_ball_16f3ms_53bin_iq8.cfg"
+    )
+    default = recorder.dump_seconds_from_config(
+        CONFIG_DIR / "iwr6843_l3dump_wide_24f3ms_53bin_iq16.cfg"
+    )
+
+    assert fast == pytest.approx(default / 3, rel=0.01)
+    assert fast < 2.5
+
+
+def test_the_ball_profiles_keep_the_default_profiles_flight_frames():
+    def capture_plan(name):
+        for line in (CONFIG_DIR / name).read_text().splitlines():
+            if line.startswith("phaseCaptureCfg"):
+                return [int(value) for value in line.split()[1:]]
+        raise AssertionError("no phaseCaptureCfg")
+
+    default = capture_plan("iwr6843_l3dump_wide_24f3ms_53bin_iq16.cfg")
+    for name in (
+        "iwr6843_l3dump_ball_16f3ms_53bin_iq8.cfg",
+        "iwr6843_l3dump_ball_16f3ms_53bin_iq16.cfg",
+    ):
+        plan = capture_plan(name)
+        # Only the pre-trigger frame count differs; the firmware needs at least one.
+        assert plan[2] == 1
+        assert plan[:2] + plan[3:] == default[:2] + default[3:]
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "",
+        "frameCfg 0 2 12 0 3 1 0\n",
+        "phaseCaptureCfg 20 53\nframeCfg 0 2 12 0 3 1 0\n",
+        "frameCfg x\n",
+    ],
+)
+def test_an_unreadable_profile_gives_no_wait_estimate(tmp_path, text):
+    path = tmp_path / "profile.cfg"
+    path.write_text(text)
+
+    assert recorder.dump_seconds_from_config(path) is None
+
+
+def test_a_missing_profile_gives_no_wait_estimate(tmp_path):
+    assert recorder.dump_seconds_from_config(tmp_path / "missing.cfg") is None

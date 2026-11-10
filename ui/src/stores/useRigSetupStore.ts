@@ -22,6 +22,13 @@ export interface RigSetupSnapshot {
     distance_source: RigDistanceSource;
     net_distance_m: number | null;
   };
+  /** The zero for sideways launch: set once from shots hit at the target. */
+  straight_line: {
+    set: boolean;
+    /** Recent shots with a start line, up to five. */
+    shots: number;
+    shots_needed: number;
+  };
 }
 
 interface RigSetupState {

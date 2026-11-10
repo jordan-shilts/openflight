@@ -30,6 +30,12 @@ export const en = {
   'setup.hintTapeOnce': 'Measure this once with a tape. The camera learns from it.',
   'setup.hintTeachCamera': 'Simulator shots left to teach the camera: {count}',
   'setup.saveFailed': "That change didn't save. Try again.",
+  'setup.straightLine': 'Straight line',
+  'setup.straightSet': 'Set from your shots',
+  'setup.straightNeedShots': 'Hit {count} more at your target',
+  'setup.straightReady': 'Press Set after shots hit straight',
+  'setup.straightSetAction': 'Set',
+  'setup.straightClear': 'Clear',
 
   'header.serverConnected': 'Server connected',
   'header.serverDisconnected': 'Server disconnected',

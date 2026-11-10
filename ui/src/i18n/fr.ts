@@ -32,6 +32,12 @@ export const fr: Messages = {
   'setup.hintTapeOnce': "Mesurez une fois au mètre. La caméra s'en sert pour apprendre.",
   'setup.hintTeachCamera': 'Coups en Simulateur restants pour former la caméra : {count}',
   'setup.saveFailed': "Ce changement n'a pas été enregistré. Réessayez.",
+  'setup.straightLine': 'Ligne droite',
+  'setup.straightSet': 'Réglée sur vos coups',
+  'setup.straightNeedShots': 'Encore {count} coups vers la cible',
+  'setup.straightReady': 'Appuyez sur Régler après des coups droits',
+  'setup.straightSetAction': 'Régler',
+  'setup.straightClear': 'Effacer',
 
   'header.serverConnected': 'Serveur connecté',
   'header.serverDisconnected': 'Serveur déconnecté',

@@ -32,6 +32,12 @@ export const es: Messages = {
   'setup.hintTapeOnce': 'Mídelo una vez con una cinta. La cámara aprende de ello.',
   'setup.hintTeachCamera': 'Golpes en Simulador para enseñar a la cámara: {count}',
   'setup.saveFailed': 'Ese cambio no se guardó. Inténtalo de nuevo.',
+  'setup.straightLine': 'Línea recta',
+  'setup.straightSet': 'Fijada con tus golpes',
+  'setup.straightNeedShots': 'Pega {count} más a tu objetivo',
+  'setup.straightReady': 'Pulsa Fijar tras golpes rectos',
+  'setup.straightSetAction': 'Fijar',
+  'setup.straightClear': 'Borrar',
 
   'header.serverConnected': 'Servidor conectado',
   'header.serverDisconnected': 'Servidor desconectado',

@@ -216,3 +216,67 @@ def test_no_usable_clip_changes_nothing(store, emitted, capture):
 
     assert emitted == []
     assert store.geometry().distance_source == "none"
+
+
+# -- the straight line ------------------------------------------------------
+
+
+def measured(client, payload, remote_addr="127.0.0.1"):
+    return client.post(
+        "/api/shots/measured", json=payload, environ_base={"REMOTE_ADDR": remote_addr}
+    )
+
+
+@pytest.fixture
+def mock_kiosk(monkeypatch):
+    mock = server_module.MockLaunchMonitor()
+    mock.start(shot_callback=lambda shot: None)
+    monkeypatch.setattr(server_module, "monitor", mock)
+    return mock
+
+
+def test_a_swings_start_line_is_remembered_for_set_straight(store, client, emitted, mock_kiosk):
+    response = measured(
+        client, {"ball_speed_mph": 110, "launch_angle_vertical": 17, "horizontal_phase_rad": -0.8}
+    )
+
+    assert response.status_code == 201
+    assert store.snapshot()["straight_line"]["shots"] == 1
+    # The Setup tab's tally moves without a refresh.
+    assert emitted[-1][0] == "rig_setup"
+    assert emitted[-1][1]["straight_line"]["shots"] == 1
+
+
+def test_a_swing_without_a_start_line_leaves_the_tally_alone(store, client, emitted, mock_kiosk):
+    assert measured(client, {"ball_speed_mph": 110}).status_code == 201
+
+    assert store.snapshot()["straight_line"]["shots"] == 0
+    assert "rig_setup" not in [event for event, _payload in emitted]
+
+
+@pytest.mark.parametrize("phase", ["left", 7.0, True])
+def test_a_bad_start_line_costs_the_whole_post(store, client, emitted, mock_kiosk, phase):
+    response = measured(client, {"ball_speed_mph": 110, "horizontal_phase_rad": phase})
+
+    assert response.status_code == 400
+    assert "horizontal_phase_rad" in response.get_json()["error"]
+    assert mock_kiosk.get_shots() == []
+
+
+def test_set_straight_from_the_screen_reaches_the_next_swing(store, client, emitted, mock_kiosk):
+    for phase in (-0.80, -0.78, -0.82):
+        measured(client, {"ball_speed_mph": 110, "horizontal_phase_rad": phase})
+
+    response = client.post("/api/rig-setup", json={"straight_line": "set"})
+
+    assert response.status_code == 200
+    assert response.get_json()["straight_line"]["set"] is True
+    geometry = observe(client, {}).get_json()
+    assert geometry["horizontal_phase_reference_rad"] == pytest.approx(-0.80, abs=1e-3)
+
+
+def test_set_straight_too_early_is_refused_with_the_reason(store, client, emitted):
+    response = client.post("/api/rig-setup", json={"straight_line": "set"})
+
+    assert response.status_code == 400
+    assert "3 shots" in response.get_json()["error"]

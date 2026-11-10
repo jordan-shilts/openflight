@@ -331,6 +331,81 @@ def tx2_phase_at(
     return circular_median(phases), weight
 
 
+# TX2 sits at the TX1/TX3 phase centre, two lambda/2 elements in from TX1 along
+# the 8-element array. So each TX2.RX element shares its position on that axis
+# with exactly one TX1 or TX3 element; only the orthogonal lambda/2 step differs.
+# Pairs are (TX2 rx, other rx). The mirrored pairing is four elements apart and
+# gives noise on real captures, which is how the direction was confirmed.
+TX2_COLOCATED_TX1_PAIRS = ((0, 2), (1, 3))
+TX2_COLOCATED_TX3_PAIRS = ((2, 0), (3, 1))
+TX2_COLOCATED_N_RX = 4
+
+
+def tx2_colocated_products_at(
+    tdm: np.ndarray,
+    frame: int,
+    loop: int,
+    local_bin: int,
+    *,
+    velocity_ms: float,
+    tdm_sign: int,
+) -> tuple[complex, complex]:
+    """TX2 against the TX1 and TX3 elements at its own array position.
+
+    The midpoint reference in :func:`tx2_phase_at` assumes one arrival angle
+    along the 8-element axis. A floor reflection adds a second, and the
+    TX1/TX3 voltage average then no longer stands in for TX2's position
+    (2026-11-08 radar-only session: TX3/TX1 amplitude swung +/-7 dB between
+    frames and the midpoint phase scattered). Two elements at the same position
+    on that axis see any mix of such arrivals identically, so their phase
+    difference is the orthogonal-axis term alone.
+
+    Returns the summed pair products (TX2 x conj TX1, TX2 x conj TX3) for one
+    (frame, loop, bin). Residual motion error enters the two with opposite
+    sign; :func:`split_reference_phases` cancels it.
+    """
+    tx1 = tdm[frame, loop, 0, :, local_bin]
+    tx2 = tdm[frame, loop, 1, :, local_bin] * np.exp(
+        -1j * tdm_sign * 4.0 * np.pi * velocity_ms * TDM_TAU_S / LAM
+    )
+    tx3 = tdm[frame, loop, 2, :, local_bin] * np.exp(
+        -1j * tdm_sign * 4.0 * np.pi * velocity_ms * TX2_VERTICAL_TDM_TAU_S / LAM
+    )
+    via_tx1 = complex(sum(tx2[k] * np.conj(tx1[j]) for k, j in TX2_COLOCATED_TX1_PAIRS))
+    via_tx3 = complex(sum(tx2[k] * np.conj(tx3[j]) for k, j in TX2_COLOCATED_TX3_PAIRS))
+    return via_tx1, via_tx3
+
+
+def split_reference_phases(
+    via_tx1: list[complex] | np.ndarray,
+    via_tx3: list[complex] | np.ndarray,
+) -> list[float]:
+    """One phase per frame from its TX1-side and TX3-side products.
+
+    TX2 fires between TX1 and TX3, so a ball-speed error rotates the two
+    products by equal and opposite amounts. Their shot-wide mean offset is
+    removed half from each side, then each frame takes the bisector of the two
+    unit phasors: the opposite rotations cancel whatever the amplitudes are.
+    A frame with only one usable product keeps that side's corrected phase.
+    """
+    tx1 = np.asarray(via_tx1, dtype=complex)
+    tx3 = np.asarray(via_tx3, dtype=complex)
+    if tx1.shape != tx3.shape:
+        raise ValueError("TX1-side and TX3-side products must pair up frame by frame")
+    half_offset = 0.5 * float(np.angle(np.sum(tx3 * np.conj(tx1))))
+    phases: list[float] = []
+    for product_1, product_3 in zip(tx1, tx3):
+        sides = []
+        if abs(product_1) > 0:
+            sides.append(np.exp(1j * (np.angle(product_1) + half_offset)))
+        if abs(product_3) > 0:
+            sides.append(np.exp(1j * (np.angle(product_3) - half_offset)))
+        if not sides:
+            raise ValueError("a frame needs at least one usable product")
+        phases.append(float(np.angle(sum(sides))))
+    return phases
+
+
 def tx2_reference_phases_at(
     tdm: np.ndarray,
     frame: int,

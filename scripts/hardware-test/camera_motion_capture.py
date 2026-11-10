@@ -103,7 +103,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     radar.add_argument(
         "--iwr6843-config",
         type=Path,
-        default=REPO_ROOT / "config" / "iwr6843_l3dump_wide_24f3ms_53bin_iq16.cfg",
+        default=REPO_ROOT / "config" / "iwr6843_l3dump_ball_16f3ms_53bin_iq8.cfg",
+        help="Capture profile (default: the fast ball-only one, about 2.4 s per swing)",
+    )
+    radar.add_argument(
+        "--horizontal-method",
+        choices=("colocated", "midpoint"),
+        default="colocated",
+        help=(
+            "Horizontal launch estimator: colocated ignores floor reflections and needs "
+            "the Setup tab's straight line set; midpoint is upstream HLCMF-v1"
+        ),
     )
     radar.add_argument(
         "--iwr6843-cal",
@@ -324,16 +334,19 @@ def ball_speed(measurement) -> float:
     return measurement.ball_speed_corrected_mph or measurement.ball_speed_mph
 
 
-def radar_line(measurement, *, launch=None, tee_known: bool) -> str:
+def radar_line(measurement, *, launch=None, tee_known: bool, horizontal_zeroed: bool = True) -> str:
     """One line per swing: ball speed, then LCMF-v1 launch or why there is none."""
     if not measurement.ball_found or measurement.track is None:
         return "no ball in the radar data"
     track = measurement.track
     parts = [f"ball {ball_speed(measurement):.1f} mph"]
     if launch is not None and launch.accepted:
-        side = (
-            "" if launch.horizontal_deg is None else f", {launch.horizontal_deg:+.1f} deg sideways"
-        )
+        if launch.horizontal_deg is None:
+            side = ""
+        elif horizontal_zeroed:
+            side = f", {launch.horizontal_deg:+.1f} deg sideways"
+        else:
+            side = ", sideways read but the straight line is not set"
         parts.append(f"launch {launch.angle_deg:.1f} deg up{side}")
     elif launch is not None:
         parts.append(f"launch withheld ({launch.status})")
@@ -345,23 +358,30 @@ def radar_line(measurement, *, launch=None, tee_known: bool) -> str:
     return ", ".join(parts)
 
 
-def shot_payload(measurement, *, launch=None) -> dict | None:
+def shot_payload(measurement, *, launch=None, horizontal_zeroed: bool = True) -> dict | None:
     """What the kiosk gets for one swing, or None without a credible ball.
 
     Launch angles come only from an accepted LCMF-v1 result, with the evidence
-    the kiosk derives its confidences from.
+    the kiosk derives its confidences from. The colocated horizontal method has
+    no meaning until the rig's straight line is set (``horizontal_zeroed``):
+    until then the angle is held back, and only the raw phase goes along so the
+    kiosk can set that line from it.
     """
     if not credible_ball(measurement):
         return None
     payload = {"ball_speed_mph": round(ball_speed(measurement), 1)}
     if launch is None or not launch.accepted:
         return payload
+    phase = getattr(launch, "horizontal_phase_rad", None)
+    if phase is not None:
+        payload["horizontal_phase_rad"] = round(phase, 5)
     payload["launch_angle_vertical"] = round(launch.angle_deg, 2)
     payload["vertical_single_channel"] = bool(launch.single_channel)
     if launch.component_std_deg is not None:
         payload["vertical_component_std_deg"] = round(launch.component_std_deg, 3)
     if (
-        launch.horizontal_deg is not None
+        horizontal_zeroed
+        and launch.horizontal_deg is not None
         and abs(launch.horizontal_deg) <= MAX_POSTED_HORIZONTAL_DEG
     ):
         payload["launch_angle_horizontal"] = round(launch.horizontal_deg, 2)
@@ -481,6 +501,46 @@ def post_shot(url: str, payload: dict, *, opener=urllib.request.urlopen) -> str:
     return f"on screen as shot {body.get('shot_number')}"
 
 
+UART_BAUD = 1_041_667
+UART_BITS_PER_BYTE = 10  # start + 8 data + stop
+RADAR_RX_CHANNELS = 4
+ANALYSIS_S = 0.5  # ball speed plus launch angles on the Pi 5
+
+
+def dump_seconds_from_config(path: Path) -> float | None:
+    """How long one capture takes to arrive with this profile, or None if unclear.
+
+    The transfer is the whole wait, so the kiosk's countdown starts from the
+    profile instead of from a guess: chirps x RX x saved bins x bytes per sample,
+    at the firmware's fixed UART rate.
+    """
+    chirps = None
+    bytes_per_sample = 4
+    saved_bins = None
+    try:
+        lines = Path(path).read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for line in lines:
+        parts = line.split()
+        if not parts or parts[0].startswith("%"):
+            continue
+        try:
+            if parts[0] == "frameCfg":
+                chirps = (int(parts[2]) - int(parts[1]) + 1) * int(parts[3])
+            elif parts[0] == "captureFormat":
+                bytes_per_sample = 2 if parts[1] == "iq8" else 4
+            elif parts[0] == "phaseCaptureCfg":
+                values = [int(value) for value in parts[1:12]]
+                saved_bins = values[1] * values[2] + values[4] * values[5] + values[7] * values[9]
+        except (IndexError, ValueError):
+            return None
+    if not chirps or not saved_bins:
+        return None
+    nbytes = chirps * RADAR_RX_CHANNELS * saved_bins * bytes_per_sample
+    return nbytes * UART_BITS_PER_BYTE / UART_BAUD
+
+
 class KioskStatus(threading.Thread):
     """Tells the kiosk when the radar is ready and when it is busy with a dump.
 
@@ -489,16 +549,23 @@ class KioskStatus(threading.Thread):
     when the heartbeats stop, so it never shows Ready for a dead recorder.
     """
 
-    # A wide-config dump takes 7.1 s; the analysis and post add about 0.2 s.
-    DEFAULT_EXPECTED_S = 7.3
-    ANALYSIS_S = 0.2
+    # The default profile's 7.0 s dump plus analysis, for when the profile's own
+    # size cannot be read; the first real dump corrects it either way.
+    DEFAULT_EXPECTED_S = 7.5
 
-    def __init__(self, url: str, *, heartbeat_s: float = 10.0, opener=urllib.request.urlopen):
+    def __init__(
+        self,
+        url: str,
+        *,
+        dump_s: float | None = None,
+        heartbeat_s: float = 10.0,
+        opener=urllib.request.urlopen,
+    ):
         super().__init__(name="kiosk-status", daemon=True)
         self.url = url
         self.heartbeat_s = heartbeat_s
         self.opener = opener
-        self.expected_s = self.DEFAULT_EXPECTED_S
+        self.expected_s = self.DEFAULT_EXPECTED_S if dump_s is None else dump_s + ANALYSIS_S
         self.stop_event = threading.Event()
         self._reports: queue.Queue[dict] = queue.Queue()
         self._state: str | None = None
@@ -518,7 +585,7 @@ class KioskStatus(threading.Thread):
     def learn_wait(self, dump_s: float) -> None:
         """Use the last dump's real duration for the next countdown."""
         if 0.5 <= dump_s <= 30.0:
-            self.expected_s = dump_s + self.ANALYSIS_S
+            self.expected_s = dump_s + ANALYSIS_S
 
     def post(self, report: dict) -> bool:
         """Send one report; False when the kiosk did not take it."""
@@ -629,11 +696,15 @@ class RadarWorker(threading.Thread):
             ball_height_m=geometry.get("ball_height_m"),
         )
 
-    def measure_launch(self, capture, measurement, *, club, calibration, net_m):
+    def measure_launch(
+        self, capture, measurement, *, club, calibration, net_m, horizontal_zero_rad=None
+    ):
         """LCMF-v1, the live kiosk's launch method, fed the radar's own ball speed.
 
         The live path feeds it the OPS243's radial speed; the range walk's
         radial speed stands in. None without a tee range or a credible ball.
+        ``horizontal_zero_rad`` is the rig's straight line for the configured
+        horizontal method.
         """
         if calibration.tee_range_m is None or not credible_ball(measurement):
             return None
@@ -649,6 +720,8 @@ class RadarWorker(threading.Thread):
                 club=club,
                 net_range_m=net_m,
                 tx_order=self.tx_order,
+                horizontal_method=self.args.horizontal_method,
+                horizontal_phase_reference_rad=horizontal_zero_rad,
             )
         except Exception as error:  # pylint: disable=broad-exception-caught
             print(f"RADAR #{capture.sequence}: launch analysis failed: {error}")
@@ -699,16 +772,28 @@ class RadarWorker(threading.Thread):
                 print(f"RADAR #{capture.sequence}: analysis failed: {error}")
                 record["error"] = f"analysis: {error}"
             else:
+                horizontal_zero = (
+                    None if geometry is None else geometry.get("horizontal_phase_reference_rad")
+                )
                 launch = self.measure_launch(
-                    capture, measurement, club=club, calibration=calibration, net_m=net_m
+                    capture,
+                    measurement,
+                    club=club,
+                    calibration=calibration,
+                    net_m=net_m,
+                    horizontal_zero_rad=horizontal_zero,
                 )
                 tee_known = calibration.tee_range_m is not None
-                line = radar_line(measurement, launch=launch, tee_known=tee_known)
+                # The colocated method reads about 15 degrees off until it is zeroed.
+                zeroed = self.args.horizontal_method != "colocated" or horizontal_zero is not None
+                line = radar_line(
+                    measurement, launch=launch, tee_known=tee_known, horizontal_zeroed=zeroed
+                )
                 print(f"RADAR #{capture.sequence} ({club or 'no club'}): {line}")
                 record.update(measurement.to_dict())
                 if launch is not None:
                     record["lcmf"] = launch.to_dict()
-                payload = shot_payload(measurement, launch=launch)
+                payload = shot_payload(measurement, launch=launch, horizontal_zeroed=zeroed)
                 result = "no_ball" if payload is None else "shot"
                 if self.args.post_to and payload is not None:
                     status = post_shot(self.args.post_to, payload)
@@ -798,7 +883,9 @@ def main(argv: list[str] | None = None) -> int:
         radar_monitor, calibration = start_radar(args, session_dir)
         ball_sizes = BallSizes()
         if args.status_to:
-            kiosk_status = KioskStatus(args.status_to)
+            kiosk_status = KioskStatus(
+                args.status_to, dump_s=dump_seconds_from_config(args.iwr6843_config)
+            )
         radar_worker = RadarWorker(
             radar_monitor,
             calibration,

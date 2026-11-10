@@ -48,6 +48,14 @@ LATERAL_TEE_OFFSET_M = 0.064
 MPH_PER_MS = 2.23694
 HORIZONTAL_TAIL_FRAMES = 8
 HORIZONTAL_COHERENCE_MIN = 0.90
+# "midpoint" is HLCMF-v1, validated against TrackMan in a bay where the floor
+# reflection is weak. "colocated" is HLCMF-v2 for bays where it is not.
+HORIZONTAL_METHODS = ("midpoint", "colocated")
+# HLCMF-v2 reads the flight before the ball fades and nears the net. On the
+# 2026-11-08 radar-only session its frame-to-frame phase scatter was 7-11 deg
+# out to 3.25 m and 15-26 deg beyond 3.5 m (tracks ended 3.7-4.4 m).
+HORIZONTAL_COLOCATED_MAX_RANGE_M = 3.4
+HORIZONTAL_COLOCATED_MIN_FRAMES = 5
 
 # One collapsed channel must not drag the answer down. 8.0 sits in an observed
 # gap: agreeing channels spread 4.59 deg, collapsed ones 15.9-20.2 deg
@@ -93,6 +101,9 @@ class LCMFResult:
     horizontal_raw_deg: float | None = None
     horizontal_confidence: float | None = None
     horizontal_status: str | None = None
+    # Fused TX2 phase before the target-line reference is removed. A rig sets
+    # its straight-line zero from this (HLCMF-v2 only).
+    horizontal_phase_rad: float | None = None
     effective_tdm_tau_s: float = doa.TDM_TAU_S
     effective_loop_period_s: float = tracking.LOOP_PRI_S
     range_evidence: BallRangeEvidence | None = field(
@@ -131,6 +142,7 @@ class LCMFResult:
             "horizontal_raw_deg": self.horizontal_raw_deg,
             "horizontal_confidence": self.horizontal_confidence,
             "horizontal_status": self.horizontal_status,
+            "horizontal_phase_rad": self.horizontal_phase_rad,
             "effective_tdm_tau_s": self.effective_tdm_tau_s,
             "effective_loop_period_s": self.effective_loop_period_s,
         }
@@ -690,6 +702,73 @@ def _frame_balanced_horizontal_mean(
     )
 
 
+@dataclass(frozen=True)
+class _TX2TrackSample:
+    """One TDM loop on the fitted ball track, ready for a TX2 phase read."""
+
+    frame: int
+    loop: int
+    local_bin: int
+    velocity_ms: float
+    range_m: float
+
+
+def _tx2_track_samples(
+    raw: bytes,
+    shot: ShotMeasurement,
+    *,
+    phase_velocity_ms: float | None,
+    prepared: PreparedLCMFCapture | None,
+) -> tuple[np.ndarray, int, list[_TX2TrackSample]] | None:
+    """The three-TX range movie, its RX count and the loops the ball is in.
+
+    Shared by both horizontal estimators so they walk the same track the same
+    way. None when the capture has no TX2 or no ball track.
+    """
+    if prepared is None:
+        meta, cube = parse_dump(raw)
+        horizontal_mti = None
+    else:
+        meta = prepared.full_metadata
+        cube = prepared.full_cube
+        horizontal_mti = prepared.horizontal_mti()
+    if meta["n_tx"] != 3 or shot.track is None:
+        return None
+    geometry = geometry_from_header(meta, loop_period_s=TX2_LOOP_PERIOD_S)
+    n_frames, chirps_per_frame, n_rx, n_samples = cube.shape
+    loops = chirps_per_frame // meta["n_tx"]
+    tdm = cube.reshape(n_frames, loops, meta["n_tx"], n_rx, n_samples)
+    if horizontal_mti is None:
+        rfft = tdm if is_range_snapshot(meta) else np.fft.fft(tdm, axis=-1)
+        mti = rfft - rfft.mean(axis=1, keepdims=True)
+    else:
+        mti = horizontal_mti
+    samples: list[_TX2TrackSample] = []
+    for frame in range(geometry.n_frames):
+        for loop in range(geometry.n_loops):
+            time_s = geometry.loop_time(frame, loop)
+            if not shot.track.t_first - 2e-3 <= time_s <= shot.track.t_last + 2e-3:
+                continue
+            track_bin = shot.track.bin_at(time_s)
+            range_bin = int(round(track_bin))
+            if not geometry.contains_bin(range_bin, margin=1, frame=frame):
+                continue
+            samples.append(
+                _TX2TrackSample(
+                    frame=frame,
+                    loop=loop,
+                    local_bin=geometry.local_bin(range_bin, frame),
+                    velocity_ms=(
+                        phase_velocity_ms
+                        if phase_velocity_ms is not None
+                        else shot.track.speed_ms_at(time_s, geometry.range_res_m)
+                    ),
+                    range_m=float(track_bin * geometry.range_res_m),
+                )
+            )
+    return mti, n_rx, samples
+
+
 def _tx2_horizontal_proxy(
     raw: bytes,
     shot: ShotMeasurement,
@@ -707,51 +786,24 @@ def _tx2_horizontal_proxy(
     sign is flipped into TrackMan convention: positive starts right of the
     target line, negative starts left.
     """
-    if prepared is None:
-        meta, cube = parse_dump(raw)
-        horizontal_mti = None
-    else:
-        meta = prepared.full_metadata
-        cube = prepared.full_cube
-        horizontal_mti = prepared.horizontal_mti()
-    if meta["n_tx"] != 3 or shot.track is None:
+    capture = _tx2_track_samples(raw, shot, phase_velocity_ms=phase_velocity_ms, prepared=prepared)
+    if capture is None:
         return None, None, None
-    geometry = geometry_from_header(meta, loop_period_s=TX2_LOOP_PERIOD_S)
-    n_frames, chirps_per_frame, n_rx, n_samples = cube.shape
-    loops = chirps_per_frame // meta["n_tx"]
-    tdm = cube.reshape(n_frames, loops, meta["n_tx"], n_rx, n_samples)
-    if horizontal_mti is None:
-        rfft = tdm if is_range_snapshot(meta) else np.fft.fft(tdm, axis=-1)
-        mti = rfft - rfft.mean(axis=1, keepdims=True)
-    else:
-        mti = horizontal_mti
+    mti, n_rx, samples = capture
     snapshots: list[tuple[float, float, float]] = []
-    for frame in range(geometry.n_frames):
-        for loop in range(geometry.n_loops):
-            time_s = geometry.loop_time(frame, loop)
-            if not shot.track.t_first - 2e-3 <= time_s <= shot.track.t_last + 2e-3:
-                continue
-            range_bin = int(round(shot.track.bin_at(time_s)))
-            local_bin = geometry.local_bin(range_bin, frame)
-            if not geometry.contains_bin(range_bin, margin=1, frame=frame):
-                continue
-            velocity = (
-                phase_velocity_ms
-                if phase_velocity_ms is not None
-                else shot.track.speed_ms_at(time_s, geometry.range_res_m)
-            )
-            sample = doa.tx2_phase_at(
-                mti,
-                frame,
-                loop,
-                local_bin,
-                velocity_ms=velocity,
-                tdm_sign=tdm_sign,
-                n_rx=n_rx,
-            )
-            if sample is not None:
-                phase, weight = sample
-                snapshots.append((float(frame), phase, weight))
+    for sample in samples:
+        phase_weight = doa.tx2_phase_at(
+            mti,
+            sample.frame,
+            sample.loop,
+            sample.local_bin,
+            velocity_ms=sample.velocity_ms,
+            tdm_sign=tdm_sign,
+            n_rx=n_rx,
+        )
+        if phase_weight is not None:
+            phase, weight = phase_weight
+            snapshots.append((float(sample.frame), phase, weight))
     if len(snapshots) < 6:
         return None, None, "hlcmf_v1_insufficient_tail_snapshots"
     angle_deg, coherence = _frame_balanced_horizontal_mean(
@@ -761,6 +813,71 @@ def _tx2_horizontal_proxy(
     if coherence < HORIZONTAL_COHERENCE_MIN:
         return None, coherence, "hlcmf_v1_low_coherence"
     return angle_deg, coherence, "hlcmf_v1_accepted"
+
+
+def _tx2_colocated_horizontal(
+    raw: bytes,
+    shot: ShotMeasurement,
+    *,
+    tdm_sign: int,
+    phase_reference_rad: float | None = None,
+    phase_velocity_ms: float | None = None,
+    prepared: PreparedLCMFCapture | None = None,
+    max_range_m: float = HORIZONTAL_COLOCATED_MAX_RANGE_M,
+) -> tuple[float | None, float | None, str | None, float | None]:
+    """HLCMF-v2: horizontal launch that a floor reflection cannot bend.
+
+    HLCMF-v1 compares TX2 with the TX1/TX3 voltage midpoint, which only stands
+    in for TX2's position when the ball arrives from one elevation. With a
+    floor reflection it does not, and v1 fails its own coherence gate (1 of 32
+    swings accepted on the 2026-11-08 radar-only session). This compares TX2
+    only with elements at its own position on the 8-element axis (see
+    ``doa.tx2_colocated_products_at``), sums loops within a frame, and fuses
+    the last eight frames inside ``max_range_m`` with equal weight, behind the
+    same coherence gate. On that session 20 of 23 full swings passed.
+
+    Returns (angle, coherence, status, fused phase before the reference). The
+    sign convention is v1's: positive starts right of the target line. The
+    zero is not: cross-RX pairs carry their own fixed offset, so a rig needs
+    its own ``phase_reference_rad`` before the angle means anything.
+    """
+    capture = _tx2_track_samples(raw, shot, phase_velocity_ms=phase_velocity_ms, prepared=prepared)
+    if capture is None:
+        return None, None, None, None
+    mti, n_rx, samples = capture
+    if n_rx != doa.TX2_COLOCATED_N_RX:
+        return None, None, None, None
+    by_frame: dict[int, list[complex]] = {}
+    for sample in samples:
+        if sample.range_m > max_range_m:
+            continue
+        via_tx1, via_tx3 = doa.tx2_colocated_products_at(
+            mti,
+            sample.frame,
+            sample.loop,
+            sample.local_bin,
+            velocity_ms=sample.velocity_ms,
+            tdm_sign=tdm_sign,
+        )
+        sums = by_frame.setdefault(sample.frame, [0j, 0j])
+        sums[0] += via_tx1
+        sums[1] += via_tx3
+    frames = [frame for frame in sorted(by_frame) if any(abs(z) > 0 for z in by_frame[frame])]
+    frames = frames[-HORIZONTAL_TAIL_FRAMES:]
+    if len(frames) < HORIZONTAL_COLOCATED_MIN_FRAMES:
+        return None, None, "hlcmf_v2_insufficient_frames", None
+    phases = doa.split_reference_phases(
+        [by_frame[frame][0] for frame in frames],
+        [by_frame[frame][1] for frame in frames],
+    )
+    weights = [1.0] * len(phases)
+    fused_phase_rad, _coherence = _weighted_circular_mean(phases, weights)
+    angle_deg, coherence = _referenced_horizontal_mean(
+        phases, weights, phase_reference_rad=phase_reference_rad
+    )
+    if coherence < HORIZONTAL_COHERENCE_MIN:
+        return None, coherence, "hlcmf_v2_low_coherence", None
+    return angle_deg, coherence, "hlcmf_v2_accepted", fused_phase_rad
 
 
 def estimate_lcmf_v1(
@@ -774,11 +891,16 @@ def estimate_lcmf_v1(
     tdm_sign_policy: str = "positive",
     grid_step_deg: float = 0.5,
     horizontal_phase_reference_rad: float | None = None,
+    horizontal_method: str = "midpoint",
     track_override: BallTrack | None = None,
     track_override_scope: str = "burst",
     prepared: PreparedLCMFCapture | None = None,
 ) -> LCMFResult:
     """Estimate vertical launch from one TI dump and OPS ball speed.
+
+    ``horizontal_method`` picks the horizontal estimator (see
+    ``HORIZONTAL_METHODS``). Its ``horizontal_phase_reference_rad`` belongs to
+    that method: the two do not share a zero.
 
     ``track_override`` is an offline-research hook for evaluating an
     independently selected range walk. Normal production calls leave it
@@ -786,6 +908,8 @@ def estimate_lcmf_v1(
     """
     if ball_speed_mph <= 0:
         raise ValueError("ball_speed_mph must be positive")
+    if horizontal_method not in HORIZONTAL_METHODS:
+        raise ValueError(f"horizontal_method must be one of: {', '.join(HORIZONTAL_METHODS)}")
     if cal.tee_range_m is None:
         raise ValueError("LCMF-v1 requires the measured tee slant range")
     full_raw = raw
@@ -853,14 +977,30 @@ def estimate_lcmf_v1(
         # OPS measures radial speed directly. TI range slope still supplies
         # position, but multipath-biased slope must not rotate TDM phase.
         phase_velocity_ms = ball_speed_mph / MPH_PER_MS
-        horizontal_deg, horizontal_conf, horizontal_status = _tx2_horizontal_proxy(
-            full_raw,
-            shot,
-            tdm_sign=shot.tdm_sign_used,
-            phase_reference_rad=horizontal_phase_reference_rad,
-            phase_velocity_ms=phase_velocity_ms,
-            prepared=prepared,
-        )
+        horizontal_phase_rad = None
+        if horizontal_method == "colocated":
+            (
+                horizontal_deg,
+                horizontal_conf,
+                horizontal_status,
+                horizontal_phase_rad,
+            ) = _tx2_colocated_horizontal(
+                full_raw,
+                shot,
+                tdm_sign=shot.tdm_sign_used,
+                phase_reference_rad=horizontal_phase_reference_rad,
+                phase_velocity_ms=phase_velocity_ms,
+                prepared=prepared,
+            )
+        else:
+            horizontal_deg, horizontal_conf, horizontal_status = _tx2_horizontal_proxy(
+                full_raw,
+                shot,
+                tdm_sign=shot.tdm_sign_used,
+                phase_reference_rad=horizontal_phase_reference_rad,
+                phase_velocity_ms=phase_velocity_ms,
+                prepared=prepared,
+            )
         cache, radar_geometry, cube = _snapshot_cache(
             raw,
             shot,
@@ -946,6 +1086,7 @@ def estimate_lcmf_v1(
     result.horizontal_deg = horizontal_deg
     result.horizontal_confidence = horizontal_conf
     result.horizontal_status = horizontal_status
+    result.horizontal_phase_rad = horizontal_phase_rad
     result.effective_tdm_tau_s = tdm_tau_s
     result.effective_loop_period_s = loop_period_s
     return result

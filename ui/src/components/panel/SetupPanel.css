@@ -38,7 +38,8 @@
   min-width: 0;
 }
 
-.setup-panel__auto {
+.setup-panel__auto,
+.setup-panel__button {
   width: 100%;
   min-height: 44px;
   border: 1px solid var(--color-border);
@@ -51,6 +52,16 @@
   letter-spacing: 0.04em;
   text-transform: uppercase;
   cursor: pointer;
+}
+
+.setup-panel__button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.setup-panel__actions {
+  display: flex;
+  gap: 0.5rem;
 }
 
 .setup-panel__auto--on {
@@ -101,4 +112,16 @@
   font-weight: 700;
   text-align: center;
   white-space: nowrap;
+}
+
+/* 800x400: four rows plus the hint have to fit above the footer. */
+@media (max-height: 440px) {
+  .setup-panel__body {
+    gap: 0.3rem;
+    padding-block: 0.3rem;
+  }
+
+  .setup-panel__row {
+    min-height: 2.75rem;
+  }
 }
