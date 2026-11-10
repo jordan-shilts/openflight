@@ -44,6 +44,12 @@ export const es: Messages = {
 
   'live.ready': 'Listo',
   'live.readyDetail': 'Empieza un golpe o una sesión de velocidad de swing',
+  'measuring.readyDetail': 'Golpea cuando quieras',
+  'measuring.busy': 'Midiendo',
+  'measuring.busyDetail': 'Espera a Listo antes del siguiente golpe',
+  'measuring.noBall': 'No se vio la bola en ese golpe',
+  'measuring.failed': 'Falló la lectura del radar en ese golpe',
+  'measuring.firstSwing': 'Tu primer golpe aparecerá aquí',
   'live.tiRadarFailed': 'Fallo de captura del radar TI',
   'live.tiRadarDetail': 'Este golpe usó un ángulo de salida estimado. {reason}',
   'live.dismiss': 'Cerrar',

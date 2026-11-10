@@ -3,6 +3,7 @@ import { useSystemStore } from '../stores/useSystemStore';
 import { useShotStore } from '../stores/useShotStore';
 import { useCameraStore, type CameraCaptureSettings } from '../stores/useCameraStore';
 import { useRigSetupStore, type RigSetupSnapshot } from '../stores/useRigSetupStore';
+import { useMeasuringStore, type MeasuringStatusMessage } from '../stores/useMeasuringStore';
 import { useDebugStore } from '../stores/useDebugStore';
 import {
   type Shot,
@@ -60,6 +61,12 @@ class SocketService {
       console.log('Disconnected from server');
       useSystemStore.getState().setConnected(false);
       useShotStore.getState().finishShotProcessing();
+      // Without the server there is no telling whether the radar is ready.
+      useMeasuringStore.getState().goOffline();
+    });
+
+    this.socket.on('measuring_status', (data: MeasuringStatusMessage) => {
+      useMeasuringStore.getState().ingest(data);
     });
 
     this.socket.on('shot_processing', (data: { state: 'capturing' | 'calculating' | 'failed' }) => {

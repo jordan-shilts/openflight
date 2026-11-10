@@ -43,8 +43,28 @@ in Simulator.
 
 - **Tilt:** the case's tilt sensor compares each swing with the simulator, so
   sloped ground is corrected.
-- **Club:** read from the club selected on the screen.
+- **Club:** read from the club selected on the screen. The screen remembers
+  that club, so the next start opens on it instead of Driver.
 - **Radar height:** carries over as long as the case sits on the ground.
 
 Ball height assumes the ball is on the ground or a mat, so a teed ball reads
 slightly off.
+
+## Ready and Measuring
+
+Reading the radar after a swing takes about seven seconds, and a swing made
+during that read is not measured. With the camera-triggered recorder running,
+the Live screen shows a line under the header:
+
+| Line | Meaning |
+| --- | --- |
+| **Ready** | Swing when you like |
+| **Measuring**, filling left to right | The last swing is being read. Wait for Ready |
+| **Ready**, "No ball seen on that one" | The read finished and found no ball |
+
+The line disappears when the recorder stops. Radar-only swings show five tiles
+(ball speed, carry, vertical launch, horizontal launch, spin). Club speed,
+smash, spin axis, club path and attack angle return with the OPS243.
+
+The recorder reports its state with `--status-to
+http://127.0.0.1:8080/api/shots/measuring`.

@@ -44,6 +44,12 @@ export const pt: Messages = {
 
   'live.ready': 'Pronto',
   'live.readyDetail': 'Comece uma tacada ou uma sessão de velocidade de swing',
+  'measuring.readyDetail': 'Bata quando quiser',
+  'measuring.busy': 'Medindo',
+  'measuring.busyDetail': 'Aguarde Pronto antes da próxima tacada',
+  'measuring.noBall': 'Nenhuma bola detectada nessa tacada',
+  'measuring.failed': 'A leitura do radar falhou nessa tacada',
+  'measuring.firstSwing': 'Sua primeira tacada aparecerá aqui',
   'live.tiRadarFailed': 'Falha na captura do radar TI',
   'live.tiRadarDetail': 'Esta tacada usou um ângulo de saída estimado. {reason}',
   'live.dismiss': 'Fechar',

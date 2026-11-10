@@ -11,6 +11,7 @@ export { LiveViewToggle } from './LiveViewToggle';
 export { PlayerStrip } from './PlayerStrip';
 export { ProfilesPanel } from './ProfilesPanel';
 export { SetupPanel } from './SetupPanel';
+export { MeasuringBanner } from './MeasuringBanner';
 export { ProfileNameDialog } from './ProfileNameDialog';
 export { ClearSessionDialog } from './ClearSessionDialog';
 export { SimulateBubble } from './SimulateBubble';

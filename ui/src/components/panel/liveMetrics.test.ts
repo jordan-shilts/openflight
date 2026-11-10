@@ -6,6 +6,7 @@ import {
   LIVE_METRIC_COUNT,
   NO_VALUE,
   pinSelectedMetric,
+  RADAR_ONLY_METRIC_IDS,
   SWING_METRIC_COUNT,
   type LiveMetric,
 } from './liveMetrics';
@@ -271,6 +272,60 @@ describe('buildLiveMetrics', () => {
 
     const shared = swing.map((m) => m.id).filter((id) => ballStrike.some((m) => m.id === id));
     expect(shared).toEqual([]);
+  });
+
+  describe('radar-only shots', () => {
+    const radarOnly = makeShot({
+      mode: 'radar-only',
+      club_speed_mph: null,
+      smash_factor: null,
+      club_angle_deg: null,
+      club_path_deg: null,
+      spin_axis_deg: null,
+    });
+
+    it('shows only what the TI radar measures, in the usual order', () => {
+      const metrics = buildLiveMetrics(radarOnly, 'imperial', emptySwingStats);
+
+      expect(metrics.map((m) => m.id)).toEqual(['ball_speed', 'carry', 'launch_v', 'launch_h', 'spin']);
+      expect(metrics.map((m) => m.id)).toEqual([...RADAR_ONLY_METRIC_IDS]);
+      expect(metrics.every((m) => m.value !== NO_VALUE)).toBe(true);
+    });
+
+    it('fills one five-tile row, like a swing-speed session', () => {
+      expect(buildLiveMetrics(radarOnly, 'imperial', emptySwingStats)).toHaveLength(SWING_METRIC_COUNT);
+    });
+
+    it('keeps the same five tiles when a swing has no horizontal launch or spin', () => {
+      const sparse = buildLiveMetrics(
+        { ...radarOnly, launch_angle_horizontal: null, spin_rpm: null },
+        'imperial',
+        emptySwingStats
+      );
+
+      expect(sparse.map((m) => m.id)).toEqual([...RADAR_ONLY_METRIC_IDS]);
+      expect(byId(sparse, 'launch_h').value).toBe(NO_VALUE);
+      expect(byId(sparse, 'spin').value).toBe(NO_VALUE);
+    });
+
+    it('still turns carry into roll for a putt', () => {
+      const putt = buildLiveMetrics({ ...radarOnly, roll_distance_ft: 12 }, 'imperial', emptySwingStats);
+
+      expect(byId(putt, 'carry').label).toBe('Roll');
+    });
+
+    it('leaves every other mode on the full ten', () => {
+      for (const mode of ['rolling-buffer', 'mock', undefined] as const) {
+        expect(buildLiveMetrics(makeShot({ mode }), 'imperial', emptySwingStats)).toHaveLength(LIVE_METRIC_COUNT);
+      }
+    });
+
+    it('falls back to ball speed when the pinned tile is one it leaves out', () => {
+      const metrics = buildLiveMetrics(radarOnly, 'imperial', emptySwingStats);
+
+      expect(pinSelectedMetric(metrics, 'smash')[0].id).toBe('ball_speed');
+      expect(pinSelectedMetric(metrics, 'spin')[0].id).toBe('spin');
+    });
   });
 });
 

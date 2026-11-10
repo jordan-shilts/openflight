@@ -1,0 +1,83 @@
+/* Ready / measuring line on the Live screen. One row; read from the mat. */
+
+.measuring-banner {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-shrink: 0;
+  min-width: 0;
+  min-height: 1.9rem;
+  padding: 0.2rem 26px;
+  overflow: hidden;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  isolation: isolate;
+}
+
+.measuring-banner__label {
+  flex-shrink: 0;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.measuring-banner__detail {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 0.8125rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.measuring-banner__dot {
+  width: 0.6rem;
+  height: 0.6rem;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--color-success);
+  box-shadow: 0 0 0.5rem var(--color-success);
+}
+
+.measuring-banner--ready .measuring-banner__label {
+  color: var(--color-success);
+}
+
+/* The banner itself is the progress bar: the fill grows left to right. */
+.measuring-banner__fill {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: color-mix(in srgb, var(--color-warning) 40%, transparent);
+  transform: scaleX(var(--measuring-from, 0));
+  transform-origin: left center;
+  animation: measuring-banner-fill var(--measuring-duration, 7.3s) linear forwards;
+}
+
+.measuring-banner--measuring {
+  border-top-color: var(--color-warning);
+}
+
+.measuring-banner--measuring .measuring-banner__label {
+  color: var(--color-warning);
+}
+
+.measuring-banner--measuring .measuring-banner__detail {
+  color: var(--color-text);
+}
+
+@keyframes measuring-banner-fill {
+  to {
+    transform: scaleX(1);
+  }
+}
+
+/* Kiosk heights tighten the side padding along with the panel header. */
+@media (max-height: 640px) {
+  .measuring-banner {
+    padding-inline: 18px;
+  }
+}

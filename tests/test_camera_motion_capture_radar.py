@@ -241,6 +241,7 @@ def radar_worker(tee_m):
     worker.tx_order = "normal"
     worker.ball_sizes = None
     worker.case_pitch = None
+    worker.kiosk_status = None
     return worker
 
 
@@ -555,3 +556,206 @@ def test_a_swing_without_a_kiosk_falls_back_to_the_flags(tmp_path, monkeypatch):
 
     assert used["calibration"] is worker.calibration
     assert used["net"] == pytest.approx(4.0)
+
+
+# -- telling the kiosk ready / measuring ----------------------------------
+
+
+def status_reporter(**kwargs):
+    sent = []
+
+    def opener(request, timeout):
+        sent.append({"url": request.full_url, "body": json.loads(request.data), "timeout": timeout})
+        return FakeResponse(b"{}")
+
+    reporter = recorder.KioskStatus(
+        "http://127.0.0.1:8080/api/shots/measuring", opener=opener, **kwargs
+    )
+    return reporter, sent
+
+
+def run_until(reporter, sent, count, timeout_s=2.0):
+    """Run the reporter thread until it has posted ``count`` reports."""
+    import time
+
+    reporter.start()
+    deadline = time.monotonic() + timeout_s
+    while len(sent) < count and time.monotonic() < deadline:
+        time.sleep(0.005)
+    reporter.stop_event.set()
+    reporter.join(timeout=2.0)
+
+
+def test_reports_reach_the_kiosk_in_order_with_the_expected_wait():
+    reporter, sent = status_reporter()
+    reporter.ready()
+    reporter.measuring()
+    reporter.ready("no_ball")
+
+    run_until(reporter, sent, 3)
+
+    assert [item["body"] for item in sent] == [
+        {"state": "ready"},
+        {"state": "measuring", "expected_s": 7.3},
+        {"state": "ready", "result": "no_ball"},
+    ]
+    assert sent[0]["url"] == "http://127.0.0.1:8080/api/shots/measuring"
+    assert sent[0]["timeout"] == 2.0
+
+
+def test_the_countdown_follows_the_last_real_dump():
+    reporter, sent = status_reporter()
+    reporter.learn_wait(5.3)
+    reporter.measuring()
+
+    run_until(reporter, sent, 1)
+
+    assert sent[0]["body"] == {"state": "measuring", "expected_s": 5.5}
+
+
+@pytest.mark.parametrize("dump_s", [0.0, 0.2, 45.0])
+def test_an_implausible_dump_time_does_not_move_the_countdown(dump_s):
+    reporter, _sent = status_reporter()
+
+    reporter.learn_wait(dump_s)
+
+    assert reporter.expected_s == pytest.approx(recorder.KioskStatus.DEFAULT_EXPECTED_S)
+
+
+def test_the_current_state_is_repeated_as_a_heartbeat_without_the_result():
+    reporter, sent = status_reporter(heartbeat_s=0.02)
+    reporter.ready("shot")
+
+    run_until(reporter, sent, 3)
+
+    assert sent[0]["body"] == {"state": "ready", "result": "shot"}
+    assert all(item["body"] == {"state": "ready"} for item in sent[1:3])
+
+
+def test_nothing_is_sent_before_the_first_report():
+    reporter, sent = status_reporter(heartbeat_s=0.01)
+
+    run_until(reporter, sent, 1, timeout_s=0.1)
+
+    assert sent == []
+
+
+@pytest.mark.parametrize(
+    "error",
+    [urllib.error.URLError("refused"), TimeoutError("timed out"), ConnectionResetError("reset")],
+)
+def test_an_unreachable_kiosk_does_not_stop_the_recorder(error):
+    def opener(request, timeout):
+        raise error
+
+    reporter = recorder.KioskStatus("http://127.0.0.1:8080/x", opener=opener)
+
+    assert reporter.post({"state": "ready"}) is False
+
+
+def test_closing_says_offline_before_stopping():
+    reporter, sent = status_reporter()
+    reporter.ready()
+    reporter.start()
+
+    reporter.close()
+
+    assert [item["body"]["state"] for item in sent] == ["ready", "offline"]
+    assert not reporter.is_alive()
+
+
+class FakeStatus:
+    def __init__(self):
+        self.calls = []
+
+    def measuring(self):
+        self.calls.append("measuring")
+
+    def ready(self, result=None):
+        self.calls.append(("ready", result))
+
+    def learn_wait(self, dump_s):
+        self.calls.append(("learn", dump_s))
+
+
+def test_a_swing_the_radar_takes_starts_the_wait_on_screen():
+    status = FakeStatus()
+    monitor = SimpleNamespace(notify_trigger=lambda timestamp: True)
+
+    assert recorder.radar_trigger(monitor, status)(12.5) is True
+
+    assert status.calls == ["measuring"]
+
+
+def test_a_swing_during_a_dump_changes_nothing_on_screen():
+    status = FakeStatus()
+    monitor = SimpleNamespace(notify_trigger=lambda timestamp: False)
+
+    assert recorder.radar_trigger(monitor, status)(12.5) is False
+
+    assert status.calls == []
+
+
+def test_the_trigger_works_without_a_kiosk_to_tell():
+    seen = []
+    monitor = SimpleNamespace(notify_trigger=lambda timestamp: seen.append(timestamp) or True)
+
+    assert recorder.radar_trigger(monitor, None)(12.5) is True
+    assert seen == [12.5]
+
+
+def test_a_measured_swing_ends_the_wait_with_a_shot(tmp_path, monkeypatch):
+    worker, _used = worker_for_handle(tmp_path, None, monkeypatch)
+    worker.kiosk_status = FakeStatus()
+
+    worker.handle(capture_for_handle())
+
+    assert worker.kiosk_status.calls == [("learn", 7.1), ("ready", "shot")]
+
+
+def test_a_swing_with_no_ball_ends_the_wait_saying_so(tmp_path, monkeypatch):
+    import openflight.iwr6843.shot as shot_module
+
+    worker, _used = worker_for_handle(tmp_path, None, monkeypatch)
+    worker.kiosk_status = FakeStatus()
+
+    def no_ball(raw, calibration, **kwargs):
+        shot = measurement(found=False)
+        shot.to_dict = lambda: {"ball_found": False}
+        return shot
+
+    monkeypatch.setattr(shot_module, "process_dump", no_ball)
+
+    worker.handle(capture_for_handle())
+
+    assert worker.kiosk_status.calls[-1] == ("ready", "no_ball")
+
+
+def test_a_failed_dump_still_frees_the_screen(tmp_path, monkeypatch):
+    worker, _used = worker_for_handle(tmp_path, None, monkeypatch)
+    worker.kiosk_status = FakeStatus()
+    capture = capture_for_handle()
+    capture.valid = False
+    capture.error = "short dump"
+
+    worker.handle(capture)
+
+    # A failed dump's duration says nothing about the next wait.
+    assert worker.kiosk_status.calls == [("ready", "failed")]
+
+
+def test_a_crash_while_measuring_still_frees_the_screen(tmp_path, monkeypatch):
+    worker, _used = worker_for_handle(tmp_path, None, monkeypatch)
+    worker.kiosk_status = FakeStatus()
+    monkeypatch.setattr(worker, "current_club", lambda: (_ for _ in ()).throw(RuntimeError("x")))
+
+    with pytest.raises(RuntimeError):
+        worker.handle(capture_for_handle())
+
+    assert worker.kiosk_status.calls[-1] == ("ready", "failed")
+
+
+def test_the_status_url_is_optional():
+    assert recorder.parse_args([]).status_to is None
+    args = recorder.parse_args(["--status-to", "http://127.0.0.1:8080/api/shots/measuring"])
+    assert args.status_to == "http://127.0.0.1:8080/api/shots/measuring"

@@ -21,7 +21,8 @@ export interface ShotTrajectory {
 }
 
 export interface Shot {
-  mode?: 'rolling-buffer' | 'mock' | 'swing-speed';
+  /** `radar-only`: measured by the camera-triggered TI radar, before the OPS243 is fitted. */
+  mode?: 'rolling-buffer' | 'mock' | 'swing-speed' | 'radar-only';
   shot_number?: number | null;
   ball_speed_mph: number;
   club_speed_mph: number | null;
@@ -167,6 +168,11 @@ export interface SwingSpeedStatsFilter {
 
 export function isSwingSpeedShot(shot: Shot | null): boolean {
   return shot?.mode === 'swing-speed' || shot?.club === 'Swing Speed';
+}
+
+/** Measured by the camera-triggered TI radar alone: no club data, no measured spin. */
+export function isRadarOnlyShot(shot: Shot | null): boolean {
+  return shot?.mode === 'radar-only';
 }
 
 export function getDisplayCarryYards(shot: Shot): number {
