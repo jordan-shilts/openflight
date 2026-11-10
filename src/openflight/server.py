@@ -18,6 +18,7 @@ from collections import deque
 from dataclasses import dataclass, fields, replace
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import List, Optional
 
 from flask import Flask, Response, jsonify, request, send_file, send_from_directory
@@ -1847,6 +1848,9 @@ def _stream_catch_up(last_event_id) -> list[tuple[str, bytes]] | None:
 MEASURED_SHOT_MODE = "radar-only"
 _MEASURED_BALL_SPEED_MPH = (5.0, 250.0)
 _MEASURED_LAUNCH_DEG = (-30.0, 80.0)
+_MEASURED_HORIZONTAL_DEG = (-45.0, 45.0)
+_MEASURED_COMPONENT_STD_DEG = (0.0, 90.0)
+_MEASURED_COHERENCE = (0.0, 1.0)
 _LOCAL_ADDRESSES = frozenset({"127.0.0.1", "::1"})
 
 
@@ -1865,6 +1869,40 @@ def _measured_number(
     if not low <= value <= high:
         raise ValueError(f"{key} must be between {low:g} and {high:g}")
     return float(value)
+
+
+def _measured_launch(payload: dict) -> SimpleNamespace | None:
+    """LCMF-v1 launch evidence from a measured-shot payload, shaped for
+    ``_apply_radar_launch``; None when no launch angle was measured.
+
+    Horizontal launch only comes with an accepted vertical measurement, as in
+    the live IWR6843 path, and confidences are derived here from the radar's
+    own evidence rather than trusted from the caller.
+    """
+    vertical = _measured_number(
+        payload, "launch_angle_vertical", _MEASURED_LAUNCH_DEG, required=False
+    )
+    horizontal = _measured_number(
+        payload, "launch_angle_horizontal", _MEASURED_HORIZONTAL_DEG, required=False
+    )
+    if vertical is None:
+        if horizontal is not None:
+            raise ValueError("launch_angle_horizontal needs launch_angle_vertical")
+        return None
+    single_channel = payload.get("vertical_single_channel", False)
+    if not isinstance(single_channel, bool):
+        raise ValueError("vertical_single_channel must be true or false")
+    return SimpleNamespace(
+        angle_deg=vertical,
+        single_channel=single_channel,
+        component_std_deg=_measured_number(
+            payload, "vertical_component_std_deg", _MEASURED_COMPONENT_STD_DEG, required=False
+        ),
+        horizontal_deg=horizontal,
+        horizontal_confidence=_measured_number(
+            payload, "horizontal_coherence", _MEASURED_COHERENCE, required=False
+        ),
+    )
 
 
 @app.route("/api/shots/measured", methods=["POST"])
@@ -1889,9 +1927,7 @@ def post_measured_shot():
         ball_speed = _measured_number(
             payload, "ball_speed_mph", _MEASURED_BALL_SPEED_MPH, required=True
         )
-        launch = _measured_number(
-            payload, "launch_angle_vertical", _MEASURED_LAUNCH_DEG, required=False
-        )
+        launch = _measured_launch(payload)
     except ValueError as error:
         return jsonify({"error": str(error)}), 400
 
@@ -1902,9 +1938,7 @@ def post_measured_shot():
         mode=MEASURED_SHOT_MODE,
     )
     if launch is not None:
-        shot.launch_angle_vertical = launch
-        shot.launch_angle_vertical_source = "radar"
-        shot.angle_source = "radar"
+        _apply_radar_launch(shot, launch)
     monitor.record_measured_shot(shot)
     return jsonify({"shot_number": shot.shot_number, "ball_speed_mph": shot.ball_speed_mph}), 201
 
@@ -2906,6 +2940,32 @@ def horizontal_confidence_from(coherence: float | None) -> float:
     return round(min(ANGLE_CONFIDENCE_CEILING, max(0.0, float(coherence))), 3)
 
 
+def _apply_radar_launch(shot: Shot, measurement) -> None:
+    """Write an accepted LCMF-v1 measurement's launch angles onto the shot.
+
+    ``measurement`` needs ``angle_deg`` plus the evidence ``vertical_confidence``
+    reads, and optionally ``horizontal_deg``/``horizontal_confidence``. Shared by
+    the live IWR6843 path and radar-only measured shots so both carry the same
+    sources and confidences.
+    """
+    shot.launch_angle_vertical = measurement.angle_deg
+    # Device-level provenance is retained in iwr6843_capture. The
+    # public Shot contract uses "radar" for all measured radar angles.
+    shot.launch_angle_vertical_source = "radar"
+    shot.launch_angle_vertical_confidence = vertical_confidence(measurement)
+    shot.launch_angle_confidence = shot.launch_angle_vertical_confidence
+    shot.angle_source = "radar"
+    horizontal_deg = getattr(measurement, "horizontal_deg", None)
+    if horizontal_deg is not None:
+        shot.iwr6843_horizontal_deg = horizontal_deg
+        shot.iwr6843_horizontal_confidence = horizontal_confidence_from(
+            getattr(measurement, "horizontal_confidence", None)
+        )
+        shot.launch_angle_horizontal = horizontal_deg
+        shot.launch_angle_horizontal_confidence = shot.iwr6843_horizontal_confidence
+        shot.launch_angle_horizontal_source = "radar"
+
+
 def _snapshot_inclinometer_for_shot(shot: Shot) -> None:
     """Attach the stable pre-impact enclosure orientation used by this shot."""
     if inclinometer_service is None or shot.mode == "mock":
@@ -3011,29 +3071,14 @@ def _process_iwr6843_angle(shot: Shot) -> float | None:
                 reason="no LCMF measurement",
             )
         elif measurement.accepted:
-            shot.launch_angle_vertical = measurement.angle_deg
-            # Device-level provenance is retained in iwr6843_capture. The
-            # public Shot contract uses "radar" for all measured radar angles.
-            shot.launch_angle_vertical_source = "radar"
-            shot.launch_angle_vertical_confidence = vertical_confidence(measurement)
-            shot.launch_angle_confidence = shot.launch_angle_vertical_confidence
-            shot.angle_source = "radar"
+            _apply_radar_launch(shot, measurement)
             horizontal_deg = getattr(measurement, "horizontal_deg", None)
-            horizontal_confidence = getattr(measurement, "horizontal_confidence", None)
-            horizontal_status = getattr(measurement, "horizontal_status", None)
             if horizontal_deg is not None:
-                shot.iwr6843_horizontal_deg = horizontal_deg
-                shot.iwr6843_horizontal_confidence = horizontal_confidence_from(
-                    horizontal_confidence
-                )
-                shot.launch_angle_horizontal = horizontal_deg
-                shot.launch_angle_horizontal_confidence = shot.iwr6843_horizontal_confidence
-                shot.launch_angle_horizontal_source = "radar"
                 logger.info(
                     "[SERVER] IWR6843 TX2 horizontal proxy: %.2f° (coherence %.0f%%, status=%s)",
                     horizontal_deg,
-                    (horizontal_confidence or 0.0) * 100,
-                    horizontal_status,
+                    (getattr(measurement, "horizontal_confidence", None) or 0.0) * 100,
+                    getattr(measurement, "horizontal_status", None),
                 )
             logger.info(
                 "[SERVER] IWR6843 LCMF-v1 launch: %.2f° "

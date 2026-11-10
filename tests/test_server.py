@@ -4914,6 +4914,81 @@ class TestMeasuredShots:
         assert shot.launch_angle_vertical == pytest.approx(17.5)
         assert shot.angle_source == "radar"
 
+    def test_radar_launch_evidence_gets_the_live_radar_confidences(self, monkeypatch):
+        """Measured shots go through the same helper as the live IWR6843 path, so
+        confidences come from the radar's evidence, not from the caller."""
+        _mock, recorded = self._mock_monitor(monkeypatch)
+
+        response = self._post(
+            {
+                "ball_speed_mph": 118.0,
+                "launch_angle_vertical": 16.4,
+                "vertical_component_std_deg": 6.0,
+                "launch_angle_horizontal": -2.3,
+                "horizontal_coherence": 0.8,
+            }
+        )
+
+        assert response.status_code == 201
+        [shot] = recorded
+        evidence = SimpleNamespace(single_channel=False, component_std_deg=6.0)
+        assert shot.launch_angle_vertical == pytest.approx(16.4)
+        assert shot.launch_angle_vertical_confidence == server_module.vertical_confidence(evidence)
+        assert shot.launch_angle_confidence == shot.launch_angle_vertical_confidence
+        assert shot.launch_angle_horizontal == pytest.approx(-2.3)
+        assert shot.launch_angle_horizontal_source == "radar"
+        assert shot.iwr6843_horizontal_deg == pytest.approx(-2.3)
+        assert shot.launch_angle_horizontal_confidence == server_module.horizontal_confidence_from(
+            0.8
+        )
+
+    def test_a_single_channel_vertical_is_derated_like_the_live_path(self, monkeypatch):
+        _mock, recorded = self._mock_monitor(monkeypatch)
+
+        self._post(
+            {
+                "ball_speed_mph": 118.0,
+                "launch_angle_vertical": 16.4,
+                "vertical_single_channel": True,
+            }
+        )
+
+        [shot] = recorded
+        evidence = SimpleNamespace(single_channel=True, component_std_deg=None)
+        assert shot.launch_angle_vertical_confidence == server_module.vertical_confidence(evidence)
+        assert shot.launch_angle_horizontal is None
+
+    @pytest.mark.parametrize(
+        ("extra", "message"),
+        [
+            ({"launch_angle_horizontal": 1.0}, "needs launch_angle_vertical"),
+            (
+                {"launch_angle_vertical": 15, "launch_angle_horizontal": 46},
+                "launch_angle_horizontal must be between",
+            ),
+            (
+                {"launch_angle_vertical": 15, "vertical_single_channel": "yes"},
+                "vertical_single_channel must be true or false",
+            ),
+            (
+                {"launch_angle_vertical": 15, "vertical_component_std_deg": -1},
+                "vertical_component_std_deg must be between",
+            ),
+            (
+                {"launch_angle_vertical": 15, "horizontal_coherence": 1.5},
+                "horizontal_coherence must be between",
+            ),
+        ],
+    )
+    def test_malformed_launch_evidence_is_refused(self, monkeypatch, extra, message):
+        _mock, recorded = self._mock_monitor(monkeypatch)
+
+        response = self._post({"ball_speed_mph": 110, **extra})
+
+        assert response.status_code == 400
+        assert message in response.get_json()["error"]
+        assert recorded == []
+
     def test_a_missing_angle_is_estimated_not_invented_as_measured(self, monkeypatch):
         _mock, recorded = self._mock_monitor(monkeypatch)
         self._post({"ball_speed_mph": 110})
