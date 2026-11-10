@@ -39,6 +39,12 @@ PITCH_LIMITS_DEG = (-45.0, 45.0)
 MAX_TILT_OFFSET_DEG = 20.0
 MAX_SAMPLES = 25
 MIN_SCALE_SAMPLES = 3
+# The straight-line zero is the mean start line of the last few shots hit at
+# the target. Five is a hand of shots; three is the fewest worth averaging.
+MAX_STRAIGHT_SAMPLES = 5
+MIN_STRAIGHT_SAMPLES = 3
+STRAIGHT_LINE_ACTIONS = ("set", "clear")
+PHASE_LIMITS_RAD = (-math.pi, math.pi)
 
 _UPDATE_KEYS = frozenset(
     {
@@ -49,6 +55,7 @@ _UPDATE_KEYS = frozenset(
         "net_enabled",
         "net_distance_m",
         "radar_height_m",
+        "straight_line",
     }
 )
 
@@ -80,6 +87,15 @@ class RigGeometry:
     radar_height_m: float
     ball_height_m: float
     tilt_offset_deg: float
+    # The radar's horizontal phase for a shot on the target line; None until
+    # the straight line has been set, and then no horizontal launch is shown.
+    horizontal_phase_reference_rad: float | None = None
+
+
+def _circular_mean(phases: list[float]) -> float:
+    return math.atan2(
+        sum(math.sin(phase) for phase in phases), sum(math.cos(phase) for phase in phases)
+    )
 
 
 def _default_setups() -> dict[str, RigSetup]:
@@ -142,6 +158,9 @@ class RigSetupStore:
         # Where the ball is right now. Not saved: it moves with every setup.
         self._camera_distance_m: float | None = None
         self._pitch_deg: float | None = None
+        # Start lines of the latest shots, kept only until the zero is set.
+        self._horizontal_phases: list[float] = []
+        self._horizontal_zero_rad: float | None = None
         self._load()
 
     def _load(self) -> None:
@@ -166,6 +185,8 @@ class RigSetupStore:
             self._radar_height_m = float(data["radar_height_m"])
         self._scale_samples = self._numbers(data.get("scale_samples"))
         self._pitch_samples = self._numbers(data.get("pitch_samples"))
+        if _within(data.get("horizontal_zero_rad"), PHASE_LIMITS_RAD):
+            self._horizontal_zero_rad = float(data["horizontal_zero_rad"])
 
     def _restored(self, setup_id: str, saved: dict) -> RigSetup:
         """A saved setup, keeping the default for any field that is not valid."""
@@ -209,6 +230,7 @@ class RigSetupStore:
             "radar_height_m": self._radar_height_m,
             "scale_samples": self._scale_samples,
             "pitch_samples": self._pitch_samples,
+            "horizontal_zero_rad": self._horizontal_zero_rad,
         }
         temporary = self._path.with_name(f"{self._path.name}.tmp")
         try:
@@ -264,6 +286,7 @@ class RigSetupStore:
             radar_height_m=self._radar_height_m,
             ball_height_m=setup.ball_height_m,
             tilt_offset_deg=self._tilt_offset(),
+            horizontal_phase_reference_rad=self._horizontal_zero_rad,
         )
 
     def geometry(self) -> RigGeometry:
@@ -285,6 +308,11 @@ class RigSetupStore:
                     "ball_distance_m": geometry.ball_distance_m,
                     "distance_source": geometry.distance_source,
                     "net_distance_m": geometry.net_range_m,
+                },
+                "straight_line": {
+                    "set": self._horizontal_zero_rad is not None,
+                    "shots": len(self._horizontal_phases),
+                    "shots_needed": max(0, MIN_STRAIGHT_SAMPLES - len(self._horizontal_phases)),
                 },
             }
 
@@ -324,6 +352,8 @@ class RigSetupStore:
                 else self._radar_height_m
             )
 
+            horizontal_zero = self._straight_line_after(payload)
+
             updated = replace(setup, **changes)
             if setup_id == SIMULATOR and updated.ball_distance_m != setup.ball_distance_m:
                 # A corrected tape number invalidates what the old one taught.
@@ -334,8 +364,38 @@ class RigSetupStore:
             self._active = active
             self._setups[setup_id] = updated
             self._radar_height_m = radar_height
+            self._horizontal_zero_rad = horizontal_zero
             self._save()
         return self.snapshot()
+
+    def _straight_line_after(self, payload: dict) -> float | None:
+        """The zero this change leaves in place; raises if it asks for one too early."""
+        if "straight_line" not in payload:
+            return self._horizontal_zero_rad
+        action = payload["straight_line"]
+        if action not in STRAIGHT_LINE_ACTIONS:
+            raise RigSetupError("straight_line must be set or clear")
+        if action == "clear":
+            return None
+        if len(self._horizontal_phases) < MIN_STRAIGHT_SAMPLES:
+            raise RigSetupError(
+                f"hit {MIN_STRAIGHT_SAMPLES} shots at your target before setting straight"
+            )
+        return round(_circular_mean(self._horizontal_phases), 5)
+
+    def observe_horizontal_phase(self, phase_rad: object) -> bool:
+        """Remember one shot's start line so Set straight has shots to average.
+
+        The reading is the radar's own horizontal phase, before any zero. False
+        when it is not a usable number.
+        """
+        if not _within(phase_rad, PHASE_LIMITS_RAD):
+            return False
+        with self._lock:
+            self._horizontal_phases = [*self._horizontal_phases, float(phase_rad)][
+                -MAX_STRAIGHT_SAMPLES:
+            ]
+        return True
 
     def observe(
         self,

@@ -32,6 +32,12 @@ export const pt: Messages = {
   'setup.hintTapeOnce': 'Meça uma vez com uma trena. A câmera aprende com isso.',
   'setup.hintTeachCamera': 'Tacadas no Simulador para ensinar a câmera: {count}',
   'setup.saveFailed': 'Essa alteração não foi salva. Tente novamente.',
+  'setup.straightLine': 'Linha reta',
+  'setup.straightSet': 'Definida pelas suas tacadas',
+  'setup.straightNeedShots': 'Bata mais {count} no alvo',
+  'setup.straightReady': 'Toque em Definir após tacadas retas',
+  'setup.straightSetAction': 'Definir',
+  'setup.straightClear': 'Limpar',
 
   'header.serverConnected': 'Servidor conectado',
   'header.serverDisconnected': 'Servidor desconectado',

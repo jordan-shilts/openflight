@@ -72,6 +72,17 @@ export function SetupPanelView({ snapshot, saveFailed, unitSystem }: SetupPanelV
   const source = snapshot.effective.distance_source;
   const waitingForSwing = isCourse && setup.auto_distance && snapshot.camera_ready && source !== 'camera';
 
+  const straight = snapshot.straight_line;
+  const straightReady = straight.shots_needed === 0;
+  let straightStatus: string;
+  if (straight.set) {
+    straightStatus = t('setup.straightSet');
+  } else if (straightReady) {
+    straightStatus = t('setup.straightReady');
+  } else {
+    straightStatus = t('setup.straightNeedShots', { count: straight.shots_needed });
+  }
+
   let hint: string | null = null;
   if (!isCourse && setup.ball_distance_m === null) {
     hint = t('setup.hintTapeOnce');
@@ -163,6 +174,33 @@ export function SetupPanelView({ snapshot, saveFailed, unitSystem }: SetupPanelV
             format={format}
             onCommit={(value) => changeRigSetup({ radar_height_m: value })}
           />
+          <div className="setup-panel__trailing" />
+        </div>
+
+        <div className="setup-panel__row">
+          <div className="setup-panel__label">
+            <span>{t('setup.straightLine')}</span>
+            <small>{straightStatus}</small>
+          </div>
+          <div className="setup-panel__actions">
+            <button
+              type="button"
+              className="setup-panel__button"
+              disabled={!straightReady}
+              onClick={() => void changeRigSetup({ straight_line: 'set' })}
+            >
+              {t('setup.straightSetAction')}
+            </button>
+            {straight.set ? (
+              <button
+                type="button"
+                className="setup-panel__button"
+                onClick={() => void changeRigSetup({ straight_line: 'clear' })}
+              >
+                {t('setup.straightClear')}
+              </button>
+            ) : null}
+          </div>
           <div className="setup-panel__trailing" />
         </div>
 

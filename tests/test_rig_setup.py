@@ -316,3 +316,111 @@ def test_a_change_can_target_a_setup_that_is_not_active(store):
 
     assert store.snapshot()["active"] == SIMULATOR
     assert store.snapshot()["setups"][COURSE]["net_enabled"] is True
+
+
+# -- the straight line (horizontal launch zero) ----------------------------
+
+
+def shots(store, phases):
+    for phase in phases:
+        assert store.observe_horizontal_phase(phase) is True
+
+
+def test_a_new_rig_has_no_straight_line(store):
+    assert store.geometry().horizontal_phase_reference_rad is None
+    assert store.snapshot()["straight_line"] == {"set": False, "shots": 0, "shots_needed": 3}
+
+
+def test_the_screen_counts_the_shots_it_still_needs(store):
+    shots(store, [-0.80, -0.78])
+
+    assert store.snapshot()["straight_line"] == {"set": False, "shots": 2, "shots_needed": 1}
+
+
+def test_setting_straight_takes_the_mean_start_line_of_the_recent_shots(store):
+    shots(store, [-0.80, -0.76, -0.84])
+
+    snapshot = store.update({"straight_line": "set"})
+
+    assert snapshot["straight_line"]["set"] is True
+    assert store.geometry().horizontal_phase_reference_rad == pytest.approx(-0.80, abs=1e-3)
+
+
+def test_only_the_last_five_shots_count(store):
+    shots(store, [2.0, 2.0, 2.0, -0.8, -0.8, -0.8, -0.8, -0.8])
+
+    store.update({"straight_line": "set"})
+
+    assert store.snapshot()["straight_line"]["shots"] == 5
+    assert store.geometry().horizontal_phase_reference_rad == pytest.approx(-0.8)
+
+
+def test_the_mean_wraps_around_pi_instead_of_averaging_through_zero(store):
+    shots(store, [3.10, -3.10, 3.12, -3.12])
+
+    store.update({"straight_line": "set"})
+
+    assert abs(store.geometry().horizontal_phase_reference_rad) > 3.0
+
+
+def test_setting_straight_needs_three_shots(store):
+    shots(store, [-0.8, -0.8])
+
+    with pytest.raises(RigSetupError, match="3 shots"):
+        store.update({"straight_line": "set"})
+
+    assert store.geometry().horizontal_phase_reference_rad is None
+
+
+def test_clearing_brings_back_no_horizontal_reading(store):
+    shots(store, [-0.8, -0.8, -0.8])
+    store.update({"straight_line": "set"})
+
+    snapshot = store.update({"straight_line": "clear"})
+
+    assert snapshot["straight_line"]["set"] is False
+    assert store.geometry().horizontal_phase_reference_rad is None
+
+
+def test_the_straight_line_survives_a_restart_but_the_shot_tally_does_not(store, tmp_path):
+    shots(store, [-0.8, -0.8, -0.8])
+    store.update({"straight_line": "set"})
+
+    reopened = RigSetupStore(tmp_path / "rig.json")
+
+    assert reopened.geometry().horizontal_phase_reference_rad == pytest.approx(-0.8)
+    assert reopened.snapshot()["straight_line"] == {"set": True, "shots": 0, "shots_needed": 3}
+
+
+def test_an_unknown_straight_line_action_is_refused(store):
+    with pytest.raises(RigSetupError, match="set or clear"):
+        store.update({"straight_line": "maybe"})
+
+
+def test_a_refused_straight_line_leaves_the_rest_of_the_change_unapplied(store):
+    with pytest.raises(RigSetupError):
+        store.update({"ball_distance_m": 1.4, "straight_line": "set"})
+
+    assert store.geometry().ball_distance_m is None
+
+
+@pytest.mark.parametrize("phase", [None, "x", True, float("nan"), 4.0, -4.0])
+def test_an_unusable_start_line_is_ignored(store, phase):
+    assert store.observe_horizontal_phase(phase) is False
+    assert store.snapshot()["straight_line"]["shots"] == 0
+
+
+def test_a_saved_straight_line_that_makes_no_sense_is_dropped(tmp_path):
+    path = tmp_path / "rig.json"
+    path.write_text(json.dumps({"horizontal_zero_rad": 99}))
+
+    assert RigSetupStore(path).geometry().horizontal_phase_reference_rad is None
+
+
+def test_the_straight_line_is_the_same_in_both_setups(store):
+    shots(store, [-0.8, -0.8, -0.8])
+    store.update({"straight_line": "set"})
+
+    store.update({"active": COURSE})
+
+    assert store.geometry().horizontal_phase_reference_rad == pytest.approx(-0.8)
