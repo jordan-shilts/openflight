@@ -37,6 +37,7 @@ class _FakeConnector:
         self.codec = type("C", (), {"fields_for_target": lambda self: ["ball_speed", "vla"]})()
         self._connected = connected
         self.sent = []
+        self.held = []
         self.host = "127.0.0.1"
         self.port = 921
         self.state = ConnectionState.CONNECTED if connected else ConnectionState.RECONNECT_BACKOFF
@@ -46,6 +47,15 @@ class _FakeConnector:
 
     def send_shot(self, resolved):
         self.sent.append(resolved)
+
+    def deliver_shot(self, resolved, on_delivered=None):
+        if not self._connected:
+            self.held.append((resolved, on_delivered))
+            return False
+        self.send_shot(resolved)
+        if on_delivered is not None:
+            on_delivered()
+        return True
 
 
 def _shot():
@@ -62,10 +72,27 @@ def test_forward_fans_out_to_connected_only(server):
 
     assert len(a.sent) == 1
     assert len(b.sent) == 0
+    # the disconnected one holds the shot for its reconnect
+    assert len(b.held) == 1
+    waiting = [a_ for a_, k in server._emitted if a_[0] == "sim_shot_waiting"]
+    assert [w[1]["target"] for w in waiting] == ["opengolfsim"]
     # sim_shot emitted once for the connected connector
     shots = [a_ for a_, k in server._emitted if a_[0] == "sim_shot"]
     assert len(shots) == 1
     assert shots[0][1]["target"] == "gspro"
+
+
+def test_held_shot_is_reported_when_it_goes_out(server):
+    a = _FakeConnector("gspro", connected=False)
+    server.sim_connectors = [a]
+    server._forward_shot_to_simulators(_shot())
+    assert not any(a_[0] == "sim_shot" for a_, k in server._emitted)
+
+    resolved, on_delivered = a.held[0]
+    on_delivered()  # the connector reconnected and sent it
+
+    shots = [a_ for a_, k in server._emitted if a_[0] == "sim_shot"]
+    assert len(shots) == 1 and shots[0][1]["shot_number"] == resolved.shot_number == 1
 
 
 def test_forward_allocates_one_shot_number_across_connectors(server):
@@ -78,11 +105,19 @@ def test_forward_allocates_one_shot_number_across_connectors(server):
     assert a.sent[0].shot_number == b.sent[0].shot_number == 1
 
 
-def test_forward_noop_when_no_connector_connected(server):
-    server.sim_connectors = [_FakeConnector("gspro", connected=False)]
+def test_forward_noop_when_no_connectors(server):
+    server.sim_connectors = []
     server._forward_shot_to_simulators(_shot())
-    # No shot number consumed while offline.
+    # No shot number consumed with no sim configured.
     assert server.sim_player_state.shot_counter == 0
+    assert not any(a_[0] == "sim_shot" for a_, k in server._emitted)
+
+
+def test_forward_holds_shot_while_disconnected(server):
+    conn = _FakeConnector("gspro", connected=False)
+    server.sim_connectors = [conn]
+    server._forward_shot_to_simulators(_shot())
+    assert len(conn.held) == 1 and conn.sent == []
     assert not any(a_[0] == "sim_shot" for a_, k in server._emitted)
 
 
@@ -228,11 +263,11 @@ def test_forward_swallows_send_failure(server):
     the OSError guard catches it.
     """
 
-    def _raise_disconnect(resolved):
+    def _raise_disconnect(resolved, on_delivered=None):
         raise ConnectionError("send_raw called while not connected")
 
     boom = _FakeConnector("gspro", connected=True)
-    boom.send_shot = _raise_disconnect
+    boom.deliver_shot = _raise_disconnect
     other = _FakeConnector("opengolfsim", connected=True)
     server.sim_connectors = [boom, other]
 

@@ -1,0 +1,10 @@
+[Unit]
+Description=OpenFlight: check home Wi-Fi vs hotspot every 15 seconds
+
+[Timer]
+OnBootSec=60s
+OnUnitActiveSec=15s
+AccuracySec=1s
+
+[Install]
+WantedBy=timers.target

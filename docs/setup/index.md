@@ -20,6 +20,11 @@ Software configuration, once the hardware is wired.
 
     Run as a systemd service on boot; fullscreen, manual, and SSH variants.
 
+- :material-wifi-off: **[With or without Wi-Fi](no-wifi.md)**
+
+    Home Wi-Fi when it's there, the Pi's own hotspot when it isn't. Shots
+    ride out the switch.
+
 - :material-stethoscope: **[Hardware diagnostic](diagnostic.md)**
 
     Seven checks over the whole signal path. Run this first when something

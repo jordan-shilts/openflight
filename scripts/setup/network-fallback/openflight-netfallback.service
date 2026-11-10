@@ -1,0 +1,7 @@
+[Unit]
+Description=OpenFlight: switch between home Wi-Fi and the Pi's hotspot
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/openflight-netfallback --check
