@@ -15,18 +15,25 @@ Each clip directory gets frames.npz (the shot-capture format) and sheet.jpg,
 the frames around the biggest change with the hitting zone outlined. aim.jpg,
 saved at start, shows the first frame and the zone for aiming. --calibrate
 prints what the trigger sees once a second, for tuning --min-fraction.
+
+With --iwr6843 each trigger also captures the TI radar. --rig-setup-url follows the
+kiosk's Setup tab on every swing: the ball's apparent size and the case tilt go to
+the kiosk, and the geometry for that swing comes back.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import math
 import queue
+import statistics
 import sys
 import threading
 import time
 import urllib.error
 import urllib.request
+from collections import deque
 from pathlib import Path
 from typing import Callable
 
@@ -35,6 +42,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 import numpy as np  # noqa: E402
 
+from openflight.camera.ball_size import measure_ball_in_clip  # noqa: E402
 from openflight.camera.capture_runtime import (  # noqa: E402
     CameraCaptureRuntime,
     CameraCaptureSettings,
@@ -112,6 +120,20 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--club-from",
         default=None,
         help="Kiosk club URL read on every swing, e.g. http://127.0.0.1:8080/api/club",
+    )
+    radar.add_argument(
+        "--rig-setup-url",
+        default=None,
+        help=(
+            "Kiosk observation URL read on every swing, "
+            "e.g. http://127.0.0.1:8080/api/rig-setup/observation"
+        ),
+    )
+    radar.add_argument(
+        "--pitch-axis",
+        choices=("x", "y"),
+        default=None,
+        help="Read the case tilt sensor on this board axis each swing (default: don't)",
     )
     radar.add_argument(
         "--post-to",
@@ -306,7 +328,7 @@ def radar_line(measurement, *, launch=None, tee_known: bool) -> str:
     elif launch is not None:
         parts.append(f"launch withheld ({launch.status})")
     elif not tee_known:
-        parts.append("launch needs --tee-m")
+        parts.append("launch needs a ball distance")
     parts.append(f"({track.n_inliers} points, quality {measurement.quality})")
     if track.low_confidence:
         parts.append("LOW CONFIDENCE")
@@ -336,6 +358,87 @@ def shot_payload(measurement, *, launch=None) -> dict | None:
         if launch.horizontal_confidence is not None:
             payload["horizontal_coherence"] = round(launch.horizontal_confidence, 3)
     return payload
+
+
+class BallSizes:
+    """Ball widths by trigger time, from the camera loop to the radar worker."""
+
+    def __init__(self, keep: int = 16):
+        self._items: deque[tuple[float, float | None]] = deque(maxlen=keep)
+        self._lock = threading.Lock()
+
+    def add(self, trigger_timestamp: float, diameter_px: float | None) -> None:
+        """Remember one clip's result, including that it found no ball."""
+        with self._lock:
+            self._items.append((trigger_timestamp, diameter_px))
+
+    def near(self, timestamp: float, tolerance_s: float = 1.0) -> float | None:
+        """The width from the clip triggered closest to ``timestamp``, if any."""
+        with self._lock:
+            items = list(self._items)
+        if not items:
+            return None
+        when, diameter = min(items, key=lambda item: abs(item[0] - timestamp))
+        return diameter if abs(when - timestamp) <= tolerance_s else None
+
+
+class CasePitch:
+    """The case tilt sensor. A missing or failing sensor just means no reading."""
+
+    def __init__(self, axis: str, *, sensor=None, samples: int = 15):
+        self.axis = axis
+        self.samples = samples
+        self.sensor = sensor
+        if self.sensor is not None:
+            return
+        try:
+            from openflight.inclinometer import (  # pylint: disable=import-outside-toplevel
+                detect_accelerometer,
+            )
+
+            self.sensor = detect_accelerometer(bus_number=1, address=None)
+            self.sensor.initialize()
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            print(f"Case tilt sensor unavailable: {error}")
+            self.sensor = None
+
+    def read(self) -> float | None:
+        """Median pitch over a burst of samples, or None."""
+        if self.sensor is None:
+            return None
+        from openflight.inclinometer.service import (  # pylint: disable=import-outside-toplevel
+            pitch_degrees,
+        )
+
+        try:
+            return statistics.median(
+                pitch_degrees(self.sensor.read(), self.axis) for _ in range(self.samples)
+            )
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            print(f"Case tilt read failed: {error}")
+            return None
+
+
+def rig_geometry(
+    url: str,
+    *,
+    diameter_px: float | None,
+    pitch_deg: float | None,
+    opener=urllib.request.urlopen,
+) -> dict | None:
+    """Give the kiosk this swing's readings; return its geometry, or None."""
+    request = urllib.request.Request(
+        url,
+        data=json.dumps({"diameter_px": diameter_px, "pitch_deg": pitch_deg}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with opener(request, timeout=3.0) as response:
+            geometry = json.loads(response.read() or b"{}")
+    except (urllib.error.URLError, OSError, ValueError):
+        return None
+    return geometry if isinstance(geometry, dict) and "tee_range_m" in geometry else None
 
 
 def kiosk_club(url: str, *, opener=urllib.request.urlopen) -> str | None:
@@ -371,7 +474,16 @@ def post_shot(url: str, payload: dict, *, opener=urllib.request.urlopen) -> str:
 class RadarWorker(threading.Thread):
     """Analyze each TI dump with the radar-only pipeline as it arrives."""
 
-    def __init__(self, monitor, calibration, *, args: argparse.Namespace, outdir: Path):
+    def __init__(
+        self,
+        monitor,
+        calibration,
+        *,
+        args: argparse.Namespace,
+        outdir: Path,
+        ball_sizes: BallSizes | None = None,
+        case_pitch: CasePitch | None = None,
+    ):
         super().__init__(name="radar-results", daemon=True)
         from openflight.iwr6843.monitor import (  # pylint: disable=import-outside-toplevel
             tx_order_from_config,
@@ -380,6 +492,8 @@ class RadarWorker(threading.Thread):
         self.monitor = monitor
         self.calibration = calibration
         self.args = args
+        self.ball_sizes = ball_sizes
+        self.case_pitch = case_pitch
         self.tx_order = tx_order_from_config(args.iwr6843_config)
         self.results_path = outdir / "radar.jsonl"
         self.stop_event = threading.Event()
@@ -398,13 +512,39 @@ class RadarWorker(threading.Thread):
                 return club
         return self.args.club
 
-    def measure_launch(self, capture, measurement, club=None):
+    def swing_geometry(self, capture) -> dict | None:
+        """Tell the kiosk what the camera and tilt sensor saw; get this swing's setup."""
+        if not self.args.rig_setup_url:
+            return None
+        diameter_px = (
+            None if self.ball_sizes is None else self.ball_sizes.near(capture.trigger_timestamp)
+        )
+        pitch_deg = None if self.case_pitch is None else self.case_pitch.read()
+        return rig_geometry(self.args.rig_setup_url, diameter_px=diameter_px, pitch_deg=pitch_deg)
+
+    def calibration_for(self, geometry: dict | None):
+        """The calibration for one swing; flags apply when the kiosk has no answer."""
+        if geometry is None:
+            return self.calibration
+        from openflight.iwr6843.calibration_session import (  # pylint: disable=import-outside-toplevel
+            clone_calibration,
+        )
+
+        return clone_calibration(
+            self.calibration,
+            tee_range_m=geometry.get("tee_range_m"),
+            tilt_deg=math.degrees(self.calibration.tilt_rad) + geometry.get("tilt_offset_deg", 0.0),
+            radar_height_m=geometry.get("radar_height_m"),
+            ball_height_m=geometry.get("ball_height_m"),
+        )
+
+    def measure_launch(self, capture, measurement, *, club, calibration, net_m):
         """LCMF-v1, the live kiosk's launch method, fed the radar's own ball speed.
 
         The live path feeds it the OPS243's radial speed; the range walk's
         radial speed stands in. None without a tee range or a credible ball.
         """
-        if self.args.tee_m is None or not credible_ball(measurement):
+        if calibration.tee_range_m is None or not credible_ball(measurement):
             return None
         from openflight.iwr6843.lcmf import (  # pylint: disable=import-outside-toplevel
             estimate_lcmf_v1,
@@ -413,10 +553,10 @@ class RadarWorker(threading.Thread):
         try:
             return estimate_lcmf_v1(
                 capture.raw,
-                self.calibration,
+                calibration,
                 ball_speed_mph=measurement.ball_speed_mph,
                 club=club,
-                net_range_m=self.args.net_m,
+                net_range_m=net_m,
                 tx_order=self.tx_order,
             )
         except Exception as error:  # pylint: disable=broad-exception-caught
@@ -440,20 +580,27 @@ class RadarWorker(threading.Thread):
             print(f"RADAR #{capture.sequence}: capture failed: {capture.error}")
             record["error"] = capture.error
         else:
+            geometry = self.swing_geometry(capture)
+            calibration = self.calibration_for(geometry)
+            net_m = self.args.net_m if geometry is None else geometry.get("net_range_m")
+            record["rig"] = geometry
             try:
                 measurement = process_dump(
                     capture.raw,
-                    self.calibration,
+                    calibration,
                     club=club,
-                    net_range_m=self.args.net_m,
+                    net_range_m=net_m,
                     tx_order=self.tx_order,
                 )
             except Exception as error:  # pylint: disable=broad-exception-caught
                 print(f"RADAR #{capture.sequence}: analysis failed: {error}")
                 record["error"] = f"analysis: {error}"
             else:
-                launch = self.measure_launch(capture, measurement, club)
-                line = radar_line(measurement, launch=launch, tee_known=self.args.tee_m is not None)
+                launch = self.measure_launch(
+                    capture, measurement, club=club, calibration=calibration, net_m=net_m
+                )
+                tee_known = calibration.tee_range_m is not None
+                line = radar_line(measurement, launch=launch, tee_known=tee_known)
                 print(f"RADAR #{capture.sequence} ({club or 'no club'}): {line}")
                 record.update(measurement.to_dict())
                 if launch is not None:
@@ -525,10 +672,18 @@ def main(argv: list[str] | None = None) -> int:
             cooldown_s=args.cooldown,
         )
     )
-    radar_monitor = radar_worker = None
+    radar_monitor = radar_worker = ball_sizes = None
     if args.iwr6843:
         radar_monitor, calibration = start_radar(args, session_dir)
-        radar_worker = RadarWorker(radar_monitor, calibration, args=args, outdir=session_dir)
+        ball_sizes = BallSizes()
+        radar_worker = RadarWorker(
+            radar_monitor,
+            calibration,
+            args=args,
+            outdir=session_dir,
+            ball_sizes=ball_sizes,
+            case_pitch=CasePitch(args.pitch_axis) if args.pitch_axis else None,
+        )
         geometry = "no --tee-m: ball speed only" if args.tee_m is None else f"tee {args.tee_m} m"
         print(f"TI radar armed on {radar_monitor.port} ({geometry})")
     worker_holder: dict[str, TriggerWorker] = {}
@@ -574,6 +729,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"clip failed to save: {capture.error}")
                 continue
             saved += 1
+            if ball_sizes is not None:
+                ball = measure_ball_in_clip(capture.path)
+                ball_sizes.add(capture.trigger_timestamp, ball.diameter_px if ball else None)
             peak = save_contact_sheet(Path(capture.path), args.roi)
             where = "" if peak is None else f", biggest change at frame {peak:+d} from the trigger"
             print(f"clip {saved}: {describe(capture)}{where} -> {capture.path}")

@@ -10,6 +10,7 @@ export type { LiveView } from './liveView';
 export { LiveViewToggle } from './LiveViewToggle';
 export { PlayerStrip } from './PlayerStrip';
 export { ProfilesPanel } from './ProfilesPanel';
+export { SetupPanel } from './SetupPanel';
 export { ProfileNameDialog } from './ProfileNameDialog';
 export { ClearSessionDialog } from './ClearSessionDialog';
 export { SimulateBubble } from './SimulateBubble';

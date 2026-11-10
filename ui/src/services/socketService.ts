@@ -2,6 +2,7 @@ import { io, type Socket } from 'socket.io-client';
 import { useSystemStore } from '../stores/useSystemStore';
 import { useShotStore } from '../stores/useShotStore';
 import { useCameraStore, type CameraCaptureSettings } from '../stores/useCameraStore';
+import { useRigSetupStore, type RigSetupSnapshot } from '../stores/useRigSetupStore';
 import { useDebugStore } from '../stores/useDebugStore';
 import {
   type Shot,
@@ -144,6 +145,10 @@ class SocketService {
 
     this.socket.on('radar_config', (data: RadarConfig) => {
       useDebugStore.getState().setRadarConfig(data);
+    });
+
+    this.socket.on('rig_setup', (data: RigSetupSnapshot) => {
+      useRigSetupStore.getState().setSnapshot(data);
     });
 
     this.socket.on('camera_capture_settings', (data: CameraCaptureSettings) => {

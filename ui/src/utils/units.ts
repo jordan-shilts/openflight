@@ -3,6 +3,7 @@ export type UnitSystem = 'imperial' | 'metric';
 const MPH_TO_KMH = 1.60934;
 const YARDS_TO_METERS = 0.9144;
 const FEET_TO_METERS = 0.3048;
+const METERS_PER_INCH = 0.0254;
 const IMPERIAL_SPEED_UNIT = 'mph';
 const METRIC_SPEED_UNIT = 'km/h';
 const IMPERIAL_DISTANCE_UNIT = 'yds';
@@ -11,6 +12,22 @@ const IMPERIAL_HEIGHT_UNIT = 'ft';
 const METRIC_HEIGHT_UNIT = 'm';
 const IMPERIAL_ROLL_UNIT = 'ft';
 const METRIC_ROLL_UNIT = 'm';
+
+/** A rig setup measurement: feet and inches, or metres to the centimetre. */
+export function formatRigDistance(meters: number, unitSystem: UnitSystem): string {
+  if (unitSystem === 'metric') {
+    return `${meters.toFixed(2)} m`;
+  }
+  const totalInches = Math.round(meters / METERS_PER_INCH);
+  const feet = Math.floor(totalInches / 12);
+  const inches = totalInches - feet * 12;
+  return feet > 0 ? `${feet} ft ${inches} in` : `${inches} in`;
+}
+
+/** One press of a setup stepper: an inch, or a centimetre. */
+export function rigDistanceStepMeters(unitSystem: UnitSystem): number {
+  return unitSystem === 'metric' ? 0.01 : METERS_PER_INCH;
+}
 
 export function convertSpeedFromMph(speedMph: number, unitSystem: UnitSystem): number {
   if (unitSystem === 'metric') {
