@@ -26,6 +26,10 @@ interface LivePanelProps {
   /** Pinned header control, e.g. Change club. */
   headerAction?: ReactNode;
   playerStrip?: ReactNode;
+  /** Ready / measuring line for the camera-triggered radar recorder. */
+  statusBanner?: ReactNode;
+  /** True while that recorder is reporting; the banner then speaks for readiness. */
+  recorderLive?: boolean;
   view?: LiveView;
 }
 
@@ -45,6 +49,8 @@ export function LivePanel({
   isNewShot = false,
   headerAction,
   playerStrip,
+  statusBanner,
+  recorderLive = false,
   view = 'metrics',
 }: LivePanelProps) {
   const { locale, t } = useI18n();
@@ -86,9 +92,17 @@ export function LivePanel({
     return (
       <div className="panel">
         {header}
+        {statusBanner}
         <div className="panel__body panel__body--empty live-panel__empty">
-          <span className="panel__empty-title live-panel__empty-title">{t('live.ready')}</span>
-          <span className="panel__empty-detail live-panel__empty-detail">{t('live.readyDetail')}</span>
+          {recorderLive ? (
+            // The banner already says Ready or Measuring; don't say it twice.
+            <span className="panel__empty-detail live-panel__empty-detail">{t('measuring.firstSwing')}</span>
+          ) : (
+            <>
+              <span className="panel__empty-title live-panel__empty-title">{t('live.ready')}</span>
+              <span className="panel__empty-detail live-panel__empty-detail">{t('live.readyDetail')}</span>
+            </>
+          )}
         </div>
       </div>
     );
@@ -98,6 +112,7 @@ export function LivePanel({
     return (
       <div className="panel">
         {header}
+        {statusBanner}
         <div className="panel__body live-panel__body live-panel__body--flight">
           <FlightView
             key={displayedShot.timestamp}
@@ -114,6 +129,7 @@ export function LivePanel({
   return (
     <div className="panel">
       {header}
+      {statusBanner}
       <div className="panel__body live-panel__body">
         {isProfileNewShot ? <div className="shot-flash" /> : null}
         <div ref={gridRef} className={`live-panel__grid live-panel__grid--of-${metrics.length}`}>

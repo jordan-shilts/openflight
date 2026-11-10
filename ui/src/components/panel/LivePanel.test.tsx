@@ -285,6 +285,71 @@ describe('LivePanel', () => {
     expect(tileLabels(html)[0]).toBe('Last swing');
   });
 
+  it('renders one row of five tiles for a radar-only shot, with no empty club tiles', () => {
+    const radarOnly = makeShot({ mode: 'radar-only', club_speed_mph: null, smash_factor: null });
+    const html = render(radarOnly);
+
+    expect(html).toContain('live-panel__grid--of-5');
+    expect(tileLabels(html)).toEqual(['Ball speed', 'Carry', 'V. launch', 'H. launch', 'Spin']);
+    expect(html).not.toContain('Club speed');
+  });
+
+  describe('with the swing recorder reporting', () => {
+    function renderWithBanner(shot: Shot | null, view: 'metrics' | 'flight' = 'metrics') {
+      return text(
+        renderToString(
+          <LivePanel
+            shot={shot}
+            shots={shot ? [shot] : []}
+            profileId="james"
+            profileName="James"
+            clubLabel="7i"
+            statusBanner={<div className="test-banner">READY</div>}
+            recorderLive
+            view={view}
+          />
+        )
+      );
+    }
+
+    it('puts the ready/measuring line between the header and the tiles', () => {
+      const html = renderWithBanner(makeShot());
+
+      expect(html.indexOf('panel-header')).toBeLessThan(html.indexOf('test-banner'));
+      expect(html.indexOf('test-banner')).toBeLessThan(html.indexOf('live-panel__grid'));
+    });
+
+    it('keeps the line on the flight view', () => {
+      const html = renderWithBanner(
+        makeShot({
+          trajectory: {
+            points: [
+              [0, 0, 0, 0],
+              [107, 60, 0, 2.5],
+              [214, 0, 0, 5],
+            ],
+            carry_yards: 214,
+            apex_ft: 60,
+            landing_angle_deg: 40,
+            flight_time_s: 5,
+          },
+        }),
+        'flight'
+      );
+
+      expect(html).toContain('test-banner');
+    });
+
+    it('lets the line say Ready before the first swing, not the empty state too', () => {
+      const html = renderWithBanner(null);
+
+      expect(html).toContain('test-banner');
+      expect(html).toContain('Your first swing will show here');
+      expect(html).not.toContain('live-panel__empty-title');
+      expect(html).not.toContain('Start a shot or swing speed session');
+    });
+  });
+
   describe('flight view', () => {
     const trajectory = {
       points: [

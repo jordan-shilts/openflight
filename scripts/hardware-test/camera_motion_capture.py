@@ -18,7 +18,9 @@ prints what the trigger sees once a second, for tuning --min-fraction.
 
 With --iwr6843 each trigger also captures the TI radar. --rig-setup-url follows the
 kiosk's Setup tab on every swing: the ball's apparent size and the case tilt go to
-the kiosk, and the geometry for that swing comes back.
+the kiosk, and the geometry for that swing comes back. --status-to tells the kiosk
+when the radar is ready and when it is busy with a dump, so the Live screen can
+say Ready or Measuring.
 """
 
 from __future__ import annotations
@@ -139,6 +141,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--post-to",
         default=None,
         help="Kiosk measured-shot URL, e.g. http://127.0.0.1:8080/api/shots/measured",
+    )
+    radar.add_argument(
+        "--status-to",
+        default=None,
+        help=(
+            "Kiosk ready/measuring URL, so the screen shows the radar wait, "
+            "e.g. http://127.0.0.1:8080/api/shots/measuring"
+        ),
     )
     args = parser.parse_args(argv)
     for name in ("tee_m", "net_m", "radar_height_m"):
@@ -471,6 +481,85 @@ def post_shot(url: str, payload: dict, *, opener=urllib.request.urlopen) -> str:
     return f"on screen as shot {body.get('shot_number')}"
 
 
+class KioskStatus(threading.Thread):
+    """Tells the kiosk when the radar is ready and when it is busy with a dump.
+
+    Posts happen on this thread so the trigger path never waits on HTTP, and the
+    current state is repeated as a heartbeat: the kiosk drops back to "offline"
+    when the heartbeats stop, so it never shows Ready for a dead recorder.
+    """
+
+    # A wide-config dump takes 7.1 s; the analysis and post add about 0.2 s.
+    DEFAULT_EXPECTED_S = 7.3
+    ANALYSIS_S = 0.2
+
+    def __init__(self, url: str, *, heartbeat_s: float = 10.0, opener=urllib.request.urlopen):
+        super().__init__(name="kiosk-status", daemon=True)
+        self.url = url
+        self.heartbeat_s = heartbeat_s
+        self.opener = opener
+        self.expected_s = self.DEFAULT_EXPECTED_S
+        self.stop_event = threading.Event()
+        self._reports: queue.Queue[dict] = queue.Queue()
+        self._state: str | None = None
+
+    def ready(self, result: str | None = None) -> None:
+        """The radar can take a swing; ``result`` says how the last wait ended."""
+        self._reports.put({"state": "ready", "result": result})
+
+    def measuring(self) -> None:
+        """A swing froze the radar; the dump is on its way."""
+        self._reports.put({"state": "measuring", "expected_s": round(self.expected_s, 1)})
+
+    def offline(self) -> None:
+        """The recorder is stopping."""
+        self._reports.put({"state": "offline"})
+
+    def learn_wait(self, dump_s: float) -> None:
+        """Use the last dump's real duration for the next countdown."""
+        if 0.5 <= dump_s <= 30.0:
+            self.expected_s = dump_s + self.ANALYSIS_S
+
+    def post(self, report: dict) -> bool:
+        """Send one report; False when the kiosk did not take it."""
+        request = urllib.request.Request(
+            self.url,
+            data=json.dumps({k: v for k, v in report.items() if v is not None}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with self.opener(request, timeout=2.0) as response:
+                response.read()
+        except (urllib.error.URLError, OSError):
+            return False
+        return True
+
+    def run(self) -> None:
+        last_post = time.monotonic()
+        while not self.stop_event.is_set():
+            try:
+                # A short wait, so close() is noticed without waiting out a heartbeat.
+                report = self._reports.get(timeout=min(self.heartbeat_s, 0.25))
+            except queue.Empty:
+                if self._state is None or time.monotonic() - last_post < self.heartbeat_s:
+                    continue
+                report = {"state": self._state}
+            self._state = report["state"]
+            self.post(report)
+            last_post = time.monotonic()
+
+    def close(self) -> None:
+        """Say goodbye and stop; anything still queued is sent first."""
+        self.offline()
+        deadline = time.monotonic() + 3.0
+        while not self._reports.empty() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.stop_event.set()
+        if self.is_alive():
+            self.join(timeout=3.0)
+
+
 class RadarWorker(threading.Thread):
     """Analyze each TI dump with the radar-only pipeline as it arrives."""
 
@@ -483,6 +572,7 @@ class RadarWorker(threading.Thread):
         outdir: Path,
         ball_sizes: BallSizes | None = None,
         case_pitch: CasePitch | None = None,
+        kiosk_status: KioskStatus | None = None,
     ):
         super().__init__(name="radar-results", daemon=True)
         from openflight.iwr6843.monitor import (  # pylint: disable=import-outside-toplevel
@@ -494,6 +584,7 @@ class RadarWorker(threading.Thread):
         self.args = args
         self.ball_sizes = ball_sizes
         self.case_pitch = case_pitch
+        self.kiosk_status = kiosk_status
         self.tx_order = tx_order_from_config(args.iwr6843_config)
         self.results_path = outdir / "radar.jsonl"
         self.stop_event = threading.Event()
@@ -564,9 +655,21 @@ class RadarWorker(threading.Thread):
             return None
 
     def handle(self, capture) -> None:
-        """Print and log one capture's result."""
+        """Measure one capture, then tell the kiosk the radar is ready again."""
+        result = "failed"
+        try:
+            result = self.measure(capture)
+        finally:
+            if self.kiosk_status is not None:
+                if capture.valid:
+                    self.kiosk_status.learn_wait(capture.dump_duration_s)
+                self.kiosk_status.ready(result)
+
+    def measure(self, capture) -> str:
+        """Print and log one capture's result: "shot", "no_ball" or "failed"."""
         from openflight.iwr6843.shot import process_dump  # pylint: disable=import-outside-toplevel
 
+        result = "failed"
         club = self.current_club()
         record = {
             "sequence": capture.sequence,
@@ -606,12 +709,30 @@ class RadarWorker(threading.Thread):
                 if launch is not None:
                     record["lcmf"] = launch.to_dict()
                 payload = shot_payload(measurement, launch=launch)
+                result = "no_ball" if payload is None else "shot"
                 if self.args.post_to and payload is not None:
                     status = post_shot(self.args.post_to, payload)
                     print(f"RADAR #{capture.sequence}: {status}")
                     record["kiosk"] = status
         with self.results_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, default=str) + "\n")
+        return result
+
+
+def radar_trigger(monitor, kiosk_status: KioskStatus | None) -> Callable[[float], bool]:
+    """Freeze the radar on a swing and, when it took the trigger, start the wait on screen.
+
+    A trigger that arrives while a dump is in flight is refused by the monitor
+    and changes nothing: the screen is already showing the wait.
+    """
+
+    def on_trigger(timestamp: float) -> bool:
+        accepted = monitor.notify_trigger(timestamp)
+        if accepted and kiosk_status is not None:
+            kiosk_status.measuring()
+        return accepted
+
+    return on_trigger
 
 
 def start_radar(args: argparse.Namespace, session_dir: Path):
@@ -672,10 +793,12 @@ def main(argv: list[str] | None = None) -> int:
             cooldown_s=args.cooldown,
         )
     )
-    radar_monitor = radar_worker = ball_sizes = None
+    radar_monitor = radar_worker = ball_sizes = kiosk_status = None
     if args.iwr6843:
         radar_monitor, calibration = start_radar(args, session_dir)
         ball_sizes = BallSizes()
+        if args.status_to:
+            kiosk_status = KioskStatus(args.status_to)
         radar_worker = RadarWorker(
             radar_monitor,
             calibration,
@@ -683,6 +806,7 @@ def main(argv: list[str] | None = None) -> int:
             outdir=session_dir,
             ball_sizes=ball_sizes,
             case_pitch=CasePitch(args.pitch_axis) if args.pitch_axis else None,
+            kiosk_status=kiosk_status,
         )
         geometry = "no --tee-m: ball speed only" if args.tee_m is None else f"tee {args.tee_m} m"
         print(f"TI radar armed on {radar_monitor.port} ({geometry})")
@@ -699,7 +823,7 @@ def main(argv: list[str] | None = None) -> int:
         roi=args.roi,
         outdir=session_dir,
         calibrate=args.calibrate,
-        on_trigger=radar_monitor.notify_trigger if radar_monitor else None,
+        on_trigger=radar_trigger(radar_monitor, kiosk_status) if radar_monitor else None,
     )
     worker_holder["worker"] = worker
 
@@ -714,6 +838,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     print(f"Swing away. Clips go to {session_dir}; Ctrl-C to stop.")
     worker.start()
+    if kiosk_status is not None:
+        kiosk_status.start()
+        kiosk_status.ready()
     started = time.monotonic()
     saved = 0
     try:
@@ -745,6 +872,8 @@ def main(argv: list[str] | None = None) -> int:
             radar_worker.join(timeout=2.0)
         if radar_monitor is not None:
             radar_monitor.stop()
+        if kiosk_status is not None:
+            kiosk_status.close()
     print(f"{saved} clip(s), {worker.triggers} trigger(s), {worker.dropped} frame(s) dropped")
     return 0
 

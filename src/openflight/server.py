@@ -43,6 +43,7 @@ from .ble.protocol import (
     encode_shot_event,
     stable_shot_event_id,
 )
+from .club_memory import load_saved_club, save_club
 from .clubs import ClubType
 from .clubs.physics import (
     PUTT_SIMULATION_DEFAULTS,
@@ -51,6 +52,7 @@ from .clubs.physics import (
     get_club_simulation_profile,
 )
 from .launch_monitor import SPIN_CONFIDENCE_HIGH, SPIN_CONFIDENCE_RELIABLE, Shot, summarize_shots
+from .measuring_status import MeasuringStatus, parse_report as parse_measuring_report
 from .ops243 import (
     UART_BAUD_COMMANDS,
     Direction,
@@ -204,8 +206,9 @@ sim_player_state = SimPlayerState(shot_counter=initial_shot_counter())
 ble_publisher = None
 
 # One Pi-owned selection is shared by the browser UI and every phone/tablet.
-# Monitors start on driver, and successful changes update this value atomically
-# before being fanned out over all enabled transports.
+# Monitors start on driver until ``_restore_saved_club`` applies the last pick,
+# and successful changes update this value atomically before being fanned out
+# over all enabled transports.
 active_club = ClubType.DRIVER
 club_selection_lock = threading.Lock()
 
@@ -991,6 +994,10 @@ def shot_to_dict(shot: Shot) -> dict:
     data = shot.to_dict()
     for log_only_field in ("mode", "readings", "readings_count"):
         data.pop(log_only_field)
+    if shot.mode == MEASURED_SHOT_MODE:
+        # The one mode the UI lays out differently: a radar-only swing has no
+        # club data, so Live shows it as one row of five tiles.
+        data["mode"] = shot.mode
     for field, digits in {
         "ball_speed_mph": 1,
         "ball_speed_raw_mph": 1,
@@ -1162,8 +1169,27 @@ def apply_club_selection(payload):
         active_club = club
         response = {"status": "applied", "club": club.value}
         _broadcast_club_selection(club)
+        # Only a pick made here is remembered: a simulator moving to the putter
+        # on a green should not decide what the next session starts on.
+        save_club(club)
     logger.info("[SERVER] Club changed to %s", club.value)
     return response, 200
+
+
+def _restore_saved_club() -> None:
+    """Start on the club picked last time instead of Driver."""
+    global active_club  # pylint: disable=global-statement
+    saved = load_saved_club()
+    if saved is None or monitor is None:
+        return
+    with club_selection_lock:
+        try:
+            monitor.set_club(saved)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("[SERVER] Could not restore the saved club %s", saved.value)
+            return
+        active_club = saved
+    logger.info("[SERVER] Restored the saved club: %s", saved.value)
 
 
 def current_club_selection(_payload=None):
@@ -1917,6 +1943,44 @@ def _measured_launch(payload: dict) -> SimpleNamespace | None:
     )
 
 
+def _measured_source_error():
+    """Why this request may not feed measured swings to the kiosk, or None.
+
+    Only the Pi itself may post, so a LAN client cannot inject shots, and only
+    in mock mode, so a real OPS session never mixes in a second source.
+    """
+    if request.remote_addr not in _LOCAL_ADDRESSES:
+        return jsonify({"error": "Measured shots are accepted from this device only"}), 403
+    if not isinstance(monitor, MockLaunchMonitor):
+        return jsonify({"error": "Measured shots are accepted only in --mock mode"}), 409
+    return None
+
+
+def _emit_measuring_status(payload: dict) -> None:
+    socketio.emit("measuring_status", payload)
+
+
+measuring_status = MeasuringStatus(_emit_measuring_status)
+
+
+@app.route("/api/shots/measuring", methods=["POST"])
+def post_measuring_status():
+    """Hear from the swing recorder whether it is ready or reading the radar.
+
+    A radar dump takes about seven seconds and a swing made meanwhile is not
+    measured, so the kiosk shows the wait. Same callers as measured shots.
+    """
+    refused = _measured_source_error()
+    if refused is not None:
+        return refused
+    try:
+        report = parse_measuring_report(request.get_json(silent=True))
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+    state = report.pop("state")
+    return jsonify(measuring_status.report(state, **report))
+
+
 @app.route("/api/shots/measured", methods=["POST"])
 def post_measured_shot():
     """Accept a swing measured outside the OPS path while the kiosk runs --mock.
@@ -1924,14 +1988,13 @@ def post_measured_shot():
     Until the OPS243 is fitted, the camera-triggered TI radar recorder measures
     ball speed (and launch angle once the rig geometry is known) and posts each
     swing here, so it shows on the kiosk like any shot. Only the Pi itself may
-    post, so a LAN client cannot inject shots, and only in mock mode, so a real
-    OPS session never mixes in a second source. Anything the payload leaves out
-    (launch angle, spin, carry) falls back to the usual estimates.
+    post, and only in mock mode (see ``_measured_source_error``). Anything the
+    payload leaves out (launch angle, spin, carry) falls back to the usual
+    estimates.
     """
-    if request.remote_addr not in _LOCAL_ADDRESSES:
-        return jsonify({"error": "Measured shots are accepted from this device only"}), 403
-    if not isinstance(monitor, MockLaunchMonitor):
-        return jsonify({"error": "Measured shots are accepted only in --mock mode"}), 409
+    refused = _measured_source_error()
+    if refused is not None:
+        return refused
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return jsonify({"error": "Send a JSON object"}), 400
@@ -2396,6 +2459,7 @@ def handle_connect():
     if power_monitor and power_monitor.status:
         socketio.emit("power_status", power_monitor.status.to_dict())
     socketio.emit("club_changed", {"club": active_club.value})
+    _emit_measuring_status(measuring_status.snapshot())
     if monitor:
         socketio.emit("session_state", _session_state_payload(include_runtime_meta=True))
         socketio.emit("trigger_status", _get_trigger_status())
@@ -3884,7 +3948,11 @@ def _enrich_shot_from_optional_hardware(shot: Shot) -> _ShotEnrichmentResult:
     _attach_camera_replay(shot, camera_capture)
     _observe_camera_ball(camera_capture)
 
-    if shot.mode != "mock":
+    # A radar-only swing comes from the recorder, which owns the camera. With no
+    # clip here there is nothing to fuse, and "rejected: no camera capture"
+    # would only be noise on the club tiles.
+    radar_only_without_clip = shot.mode == MEASURED_SHOT_MODE and camera_capture is None
+    if shot.mode != "mock" and not radar_only_without_clip:
         camera_analysis_ms = _fuse_camera_measurements(shot, camera_capture)
 
     return _ShotEnrichmentResult(
@@ -4621,6 +4689,9 @@ def start_monitor(
 
     monitor.connect()
     _reset_shot_sequence()
+    if not swing_speed_mode:
+        # A swing-speed session tags reps with a training implement, not a club.
+        _restore_saved_club()
 
     if swing_speed_mode:
         swing_config = swing_speed_kwargs or {}

@@ -44,6 +44,12 @@ export const fr: Messages = {
 
   'live.ready': 'Prêt',
   'live.readyDetail': 'Lancez un coup ou une session de vitesse de swing',
+  'measuring.readyDetail': 'Frappez quand vous voulez',
+  'measuring.busy': 'Mesure en cours',
+  'measuring.busyDetail': 'Attendez Prêt avant le prochain coup',
+  'measuring.noBall': 'Aucune balle détectée sur ce coup',
+  'measuring.failed': 'La lecture du radar a échoué sur ce coup',
+  'measuring.firstSwing': 'Votre premier coup s’affichera ici',
   'live.tiRadarFailed': 'Échec de capture du radar TI',
   'live.tiRadarDetail': 'Ce coup a utilisé un angle de lancement estimé. {reason}',
   'live.dismiss': 'Fermer',

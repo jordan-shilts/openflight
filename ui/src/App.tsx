@@ -3,6 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { useSocket } from './hooks/useSocket';
 import { useSystemStore } from './stores/useSystemStore';
 import { useShotStore } from './stores/useShotStore';
+import { useMeasuringStore } from './stores/useMeasuringStore';
 import { useCameraStore } from './stores/useCameraStore';
 import { useDebugStore } from './stores/useDebugStore';
 import { useProfileStore } from './stores/useProfileStore';
@@ -24,6 +25,7 @@ import {
   ProfilesPanel,
   ClearSessionDialog,
   SimulateBubble,
+  MeasuringBanner,
   MenuSheet,
   PanelFooter,
   PanelHeader,
@@ -52,6 +54,7 @@ import './components/panel/panel.css';
 function AppContent() {
   const { t } = useI18n();
   const { shutdown, sleepScreen } = useSocket();
+  const recorderLive = useMeasuringStore((state) => state.state !== 'offline');
   const { connected, mockMode, debugMode, latestSimShots, serverClub } = useSystemStore(
     useShallow((state) => ({
       connected: state.connected,
@@ -337,6 +340,8 @@ function AppContent() {
                 onSelectMetric={setHeroMetricId}
                 isNewShot={profileIsNewShot}
                 headerAction={liveHeaderActions}
+                statusBanner={<MeasuringBanner />}
+                recorderLive={recorderLive}
                 view={shownLiveView}
                 playerStrip={
                   <PlayerStrip
@@ -428,7 +433,8 @@ function AppContent() {
             </div>
           </div>
         )}
-        {mockMode && currentView === 'live' ? (
+        {/* Real swings are being measured while the recorder reports; a pretend one would only mix in. */}
+        {mockMode && currentView === 'live' && !recorderLive ? (
           <SimulateBubble
             label={isSwingSpeedMode ? t('app.simulateSwing') : t('app.simulateShot')}
             onSimulate={() => socketService.simulateShot()}

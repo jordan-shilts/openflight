@@ -2,7 +2,7 @@ import { useState, type CSSProperties } from 'react';
 import { clubGroupLabel } from '../../i18n';
 import { useI18n } from '../../i18n/useI18n';
 import { PanelAction } from './PanelAction';
-import { initialPickerSection, pickerGridRows, type PickerSection } from './pickerSections';
+import { pickerGridRows, resolvePickerSection, type PickerSection } from './pickerSections';
 
 interface PickerOverlayProps {
   title: string;
@@ -21,7 +21,8 @@ interface PickerOverlayProps {
  */
 export function PickerOverlay({ title, selectedId, sections, onSelect, onClose, wide = false }: PickerOverlayProps) {
   const { t } = useI18n();
-  const [sectionName, setSectionName] = useState(() => initialPickerSection(sections, selectedId));
+  const [tappedSection, setTappedSection] = useState<string | null>(null);
+  const sectionName = resolvePickerSection(sections, selectedId, tappedSection);
   const activeSection = sections.find((section) => section.name === sectionName) ?? sections[0];
   const options = activeSection?.options ?? [];
   const rows = pickerGridRows(sections);
@@ -53,7 +54,7 @@ export function PickerOverlay({ title, selectedId, sections, onSelect, onClose, 
                 key={section.name}
                 variant={active ? 'primary' : 'secondary'}
                 aria-pressed={active}
-                onClick={() => setSectionName(section.name)}
+                onClick={() => setTappedSection(section.name)}
               >
                 {clubGroupLabel(section.name)}
               </PanelAction>

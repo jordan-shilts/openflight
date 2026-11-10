@@ -1,5 +1,11 @@
 import type { Shot, SpinQuality, SwingSpeedStats } from '../../types/shot';
-import { getDisplayCarryYards, getSwingSpeedMph, isPuttShot, isSwingSpeedShot } from '../../types/shot';
+import {
+  getDisplayCarryYards,
+  getSwingSpeedMph,
+  isPuttShot,
+  isRadarOnlyShot,
+  isSwingSpeedShot,
+} from '../../types/shot';
 import type { UnitSystem } from '../../utils/units';
 import {
   formatDistance,
@@ -39,6 +45,14 @@ export const LIVE_METRIC_COUNT = 10;
 
 /** Metric count for a swing-speed session: a single 5-tile row. */
 export const SWING_METRIC_COUNT = 5;
+
+/**
+ * What the camera-triggered TI radar gives on its own, in canonical order. Club
+ * speed, smash, spin axis, club path and attack angle need the OPS243 or a
+ * camera clip, so a radar-only shot leaves them out instead of showing five
+ * dashes. The five that remain fill the same single row a swing-speed session uses.
+ */
+export const RADAR_ONLY_METRIC_IDS: readonly string[] = ['ball_speed', 'carry', 'launch_v', 'launch_h', 'spin'];
 
 function formatOptionalAngle(value: number | null, signed = false): string {
   if (value === null) return NO_VALUE;
@@ -226,12 +240,15 @@ function buildSwingSpeedMetrics(shot: Shot, stats: SwingSpeedStats, unitSystem: 
  * Build the fixed metric list for the Live panel. Returns {@link LIVE_METRIC_COUNT}
  * entries for a ball-strike shot and {@link SWING_METRIC_COUNT} for a swing-speed
  * one; the two sets share no ids, so a selected-metric choice never leaks across
- * modes.
+ * modes. A radar-only shot keeps the {@link RADAR_ONLY_METRIC_IDS} subset of the
+ * ball-strike ten.
  */
 export function buildLiveMetrics(shot: Shot, unitSystem: UnitSystem, swingStats: SwingSpeedStats): LiveMetric[] {
-  return isSwingSpeedShot(shot)
-    ? buildSwingSpeedMetrics(shot, swingStats, unitSystem)
-    : buildBallStrikeMetrics(shot, unitSystem);
+  if (isSwingSpeedShot(shot)) {
+    return buildSwingSpeedMetrics(shot, swingStats, unitSystem);
+  }
+  const metrics = buildBallStrikeMetrics(shot, unitSystem);
+  return isRadarOnlyShot(shot) ? metrics.filter((metric) => RADAR_ONLY_METRIC_IDS.includes(metric.id)) : metrics;
 }
 
 /**
