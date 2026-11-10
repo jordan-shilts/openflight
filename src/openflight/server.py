@@ -43,6 +43,7 @@ from .ble.protocol import (
     encode_shot_event,
     stable_shot_event_id,
 )
+from .club_memory import load_saved_club, save_club
 from .clubs import ClubType
 from .clubs.physics import (
     PUTT_SIMULATION_DEFAULTS,
@@ -204,8 +205,9 @@ sim_player_state = SimPlayerState(shot_counter=initial_shot_counter())
 ble_publisher = None
 
 # One Pi-owned selection is shared by the browser UI and every phone/tablet.
-# Monitors start on driver, and successful changes update this value atomically
-# before being fanned out over all enabled transports.
+# Monitors start on driver until ``_restore_saved_club`` applies the last pick,
+# and successful changes update this value atomically before being fanned out
+# over all enabled transports.
 active_club = ClubType.DRIVER
 club_selection_lock = threading.Lock()
 
@@ -1162,8 +1164,27 @@ def apply_club_selection(payload):
         active_club = club
         response = {"status": "applied", "club": club.value}
         _broadcast_club_selection(club)
+        # Only a pick made here is remembered: a simulator moving to the putter
+        # on a green should not decide what the next session starts on.
+        save_club(club)
     logger.info("[SERVER] Club changed to %s", club.value)
     return response, 200
+
+
+def _restore_saved_club() -> None:
+    """Start on the club picked last time instead of Driver."""
+    global active_club  # pylint: disable=global-statement
+    saved = load_saved_club()
+    if saved is None or monitor is None:
+        return
+    with club_selection_lock:
+        try:
+            monitor.set_club(saved)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("[SERVER] Could not restore the saved club %s", saved.value)
+            return
+        active_club = saved
+    logger.info("[SERVER] Restored the saved club: %s", saved.value)
 
 
 def current_club_selection(_payload=None):
@@ -4621,6 +4642,9 @@ def start_monitor(
 
     monitor.connect()
     _reset_shot_sequence()
+    if not swing_speed_mode:
+        # A swing-speed session tags reps with a training implement, not a club.
+        _restore_saved_club()
 
     if swing_speed_mode:
         swing_config = swing_speed_kwargs or {}

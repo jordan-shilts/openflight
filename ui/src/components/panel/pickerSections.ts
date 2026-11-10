@@ -30,6 +30,24 @@ export function initialPickerSection(sections: ReadonlyArray<PickerSection>, sel
   return match?.name ?? sections[0]?.name ?? '';
 }
 
+/**
+ * The tab to show: the one the user tapped, else the selection's family.
+ *
+ * Following the selection (rather than fixing the tab when the picker opens)
+ * matters at launch: the picker is on screen before the server says which club
+ * was saved, and it should land on that club's tab when the answer arrives.
+ */
+export function resolvePickerSection(
+  sections: ReadonlyArray<PickerSection>,
+  selectedId: string,
+  tappedSection: string | null
+): string {
+  if (tappedSection !== null && sections.some((section) => section.name === tappedSection)) {
+    return tappedSection;
+  }
+  return initialPickerSection(sections, selectedId);
+}
+
 export const PICKER_COLUMNS = 4;
 
 /** Rows needed to show the densest tab at `PICKER_COLUMNS` across, so tile size stays stable. */

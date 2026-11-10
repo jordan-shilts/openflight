@@ -113,3 +113,10 @@ def _isolate_profile_store(tmp_path_factory, monkeypatch):
     """Keep ProfileStore() off ~/.config/openflight/profiles.json during tests."""
     roster = tmp_path_factory.mktemp("profiles") / "profiles.json"
     monkeypatch.setenv("OPENFLIGHT_PROFILES_PATH", str(roster))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_saved_club(tmp_path_factory, monkeypatch):
+    """Keep club picks off ~/.config/openflight/club.json during tests."""
+    saved = tmp_path_factory.mktemp("club") / "club.json"
+    monkeypatch.setenv("OPENFLIGHT_CLUB_PATH", str(saved))
