@@ -217,6 +217,17 @@ export const pt: Messages = {
   'menu.disable': 'Desativar',
   'menu.enable': 'Ativar',
   'menu.shutdown': 'Desligar',
+  'menu.openOnPhone': 'Abrir no seu celular',
+
+  'phone.loading': 'Procurando o endereço desta tela…',
+  'phone.unavailable': 'Nenhum endereço que um celular consiga acessar. Verifique a conexão Wi-Fi e tente de novo.',
+  'phone.retry': 'Tentar de novo',
+  'phone.qrLabel': 'Código QR para {url}',
+  'phone.stepWifi': 'Conecte-se ao mesmo Wi-Fi desta tela.',
+  'phone.stepScan': 'Escaneie o código com a câmera do celular.',
+  'phone.stepInstall': 'Toque em Compartilhar (ou no menu ⋮) e depois em Adicionar à Tela de Início.',
+  'phone.alternates': 'Se não carregar, tente',
+  'phone.note': 'Funciona só neste Wi-Fi. Qualquer pessoa conectada a ele pode abrir o app.',
 
   'app.changeImplement': 'Trocar implemento',
   'app.changeClub': 'Trocar taco',

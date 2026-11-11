@@ -31,6 +31,7 @@ import {
   PanelHeader,
   PanelAction,
   PickerOverlay,
+  PhoneLinkOverlay,
   PlayerStrip,
   ClubPanel,
   ShotsPanel,
@@ -115,6 +116,7 @@ function AppContent() {
   const [selectedClub, setSelectedClub] = useState('driver');
   const [selectedTrainingImplement, setSelectedTrainingImplement] = useState('driver');
   const [menuOpen, setMenuOpen] = useState(false);
+  const [phoneLinkOpen, setPhoneLinkOpen] = useState(false);
   const [showShutdown, setShowShutdown] = useState(false);
   const [shutdownState, setShutdownState] = useState<ShutdownState>('confirm');
   // Open on every app load so the user confirms their club before the first
@@ -454,8 +456,14 @@ function AppContent() {
             setShutdownState('confirm');
             setShowShutdown(true);
           }}
+          onOpenPhoneLink={() => {
+            setMenuOpen(false);
+            setPhoneLinkOpen(true);
+          }}
         />
       ) : null}
+
+      {phoneLinkOpen ? <PhoneLinkOverlay onClose={() => setPhoneLinkOpen(false)} /> : null}
 
       {profileDialog ? (
         <ProfileNameDialog

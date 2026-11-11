@@ -217,6 +217,17 @@ export const fr: Messages = {
   'menu.disable': 'Désactiver',
   'menu.enable': 'Activer',
   'menu.shutdown': 'Éteindre',
+  'menu.openOnPhone': 'Ouvrir sur votre téléphone',
+
+  'phone.loading': 'Recherche de l’adresse de cet écran…',
+  'phone.unavailable': 'Aucune adresse joignable par un téléphone. Vérifiez la connexion Wi-Fi, puis réessayez.',
+  'phone.retry': 'Réessayer',
+  'phone.qrLabel': 'Code QR pour {url}',
+  'phone.stepWifi': 'Connectez-vous au même Wi-Fi que cet écran.',
+  'phone.stepScan': 'Scannez le code avec l’appareil photo du téléphone.',
+  'phone.stepInstall': 'Touchez Partager (ou le menu ⋮), puis Sur l’écran d’accueil.',
+  'phone.alternates': 'Si la page ne se charge pas, essayez',
+  'phone.note': 'Fonctionne uniquement sur ce Wi-Fi. Toute personne connectée peut ouvrir l’application.',
 
   'app.changeImplement': 'Changer d’outil',
   'app.changeClub': 'Changer de club',

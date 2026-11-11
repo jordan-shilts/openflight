@@ -215,6 +215,17 @@ export const en = {
   'menu.disable': 'Disable',
   'menu.enable': 'Enable',
   'menu.shutdown': 'Shut down',
+  'menu.openOnPhone': 'Open on your phone',
+
+  'phone.loading': "Finding this screen's address…",
+  'phone.unavailable': 'No address found that a phone can reach. Check the Wi-Fi connection, then try again.',
+  'phone.retry': 'Try again',
+  'phone.qrLabel': 'QR code for {url}',
+  'phone.stepWifi': 'Join the same Wi-Fi as this screen.',
+  'phone.stepScan': 'Scan the code with your phone camera.',
+  'phone.stepInstall': 'Tap Share (or the ⋮ menu), then Add to Home Screen.',
+  'phone.alternates': 'If it does not load, try',
+  'phone.note': 'Works on this Wi-Fi only. Anyone on it can open the app.',
 
   'app.changeImplement': 'Change implement',
   'app.changeClub': 'Change club',

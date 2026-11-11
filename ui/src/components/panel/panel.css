@@ -1551,6 +1551,7 @@
   color: var(--color-text);
 }
 
+.menu-sheet__phone-link,
 .menu-sheet__shutdown {
   min-height: 44px;
   border: 1px solid var(--color-danger-border);
@@ -1563,6 +1564,18 @@
   letter-spacing: 0.18em;
   text-transform: uppercase;
   cursor: pointer;
+}
+
+.menu-sheet__phone-link {
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+/* The QR screen is for the kiosk: no use once the app is on the phone itself. */
+@media (display-mode: standalone) {
+  .menu-sheet__phone-link {
+    display: none;
+  }
 }
 
 /* -------------------------------------------------------- picker overlay -- */
@@ -2019,6 +2032,32 @@
   }
 }
 
+/* 800-wide kiosks are too short for the menu in one column: settings left, system right. */
+@media (max-height: 500px) and (orientation: landscape) {
+  .menu-sheet {
+    width: min(560px, calc(100% - 24px));
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(3, auto);
+    column-gap: 18px;
+  }
+
+  .menu-sheet__section {
+    grid-column: 1;
+  }
+
+  .menu-sheet__section--system {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+
+  .menu-sheet__shutdown {
+    grid-column: 2;
+    grid-row: 3;
+    align-self: end;
+  }
+}
+
 /* ------------------------------------------- phone held upright (390x844) -- */
 /* Landscape kiosks never match, so their layout is untouched. */
 
@@ -2156,6 +2195,10 @@
 
   .live-panel__grid .live-panel__lead .metric-card__unit {
     font-size: 0.63em;
+  }
+
+  .menu-sheet__phone-link {
+    display: none;
   }
 }
 

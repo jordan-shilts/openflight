@@ -3,6 +3,7 @@ export { PanelFooter } from './PanelFooter';
 export { PanelHeader } from './PanelHeader';
 export { MenuSheet } from './MenuSheet';
 export { PickerOverlay } from './PickerOverlay';
+export { PhoneLinkOverlay } from './PhoneLinkOverlay';
 export { clubSections, trainingImplementSections, type PickerOption, type PickerSection } from './pickerSections';
 export { LivePanel } from './LivePanel';
 export { ClubPanel } from './ClubPanel';

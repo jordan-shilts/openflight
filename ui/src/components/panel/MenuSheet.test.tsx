@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { renderToString } from 'react-dom/server';
 import { MenuSheet } from './MenuSheet';
@@ -5,8 +7,34 @@ import { useSystemStore } from '../../stores/useSystemStore';
 import type { PowerStatus } from '../../types/power';
 
 function renderMenu() {
-  return renderToString(<MenuSheet onClose={() => {}} onShutdown={() => {}} />);
+  return renderToString(<MenuSheet onClose={() => {}} onShutdown={() => {}} onOpenPhoneLink={() => {}} />);
 }
+
+describe('MenuSheet open on your phone', () => {
+  const css = readFileSync(fileURLToPath(new URL('./panel.css', import.meta.url)), 'utf8');
+
+  it('offers the QR screen from the System section', () => {
+    const html = renderMenu();
+
+    expect(html).toMatch(/menu-sheet__section-title">System<.*menu-sheet__phone-link">Open on your phone</s);
+  });
+
+  it('is at least 44 CSS pixels tall for a finger', () => {
+    expect(css).toMatch(/\.menu-sheet__phone-link,\n\.menu-sheet__shutdown \{\n {2}min-height: 44px;/);
+  });
+
+  it('is hidden when the app was launched from a phone home screen', () => {
+    expect(css).toMatch(
+      /@media \(display-mode: standalone\) \{\n {2}\.menu-sheet__phone-link \{\n {4}display: none;\n {2}\}\n\}/
+    );
+  });
+
+  it('is hidden on a phone held upright', () => {
+    const portraitRules = css.split('@media (max-width: 640px) and (orientation: portrait) {').slice(1).join('');
+
+    expect(portraitRules).toMatch(/\.menu-sheet__phone-link \{\n {4}display: none;\n {2}\}/);
+  });
+});
 
 describe('MenuSheet profiles', () => {
   it('does not manage profiles in the menu', () => {
