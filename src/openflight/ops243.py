@@ -244,6 +244,14 @@ class OPS243Radar:
         self._speed_read_buffer = ""
         self._internal_speed_trigger_config = None
         self._hardware_trigger_recovery_required = False
+        # Whether the board is sampling into its rolling buffer, so a trigger
+        # now produces a dump. True only after an arm whose commands were all
+        # written (rearm_rolling_buffer, the internal speed trigger's configure
+        # and re-arm); False once a dump starts (the board then idles until
+        # re-armed), after an arm whose writes timed out, and when
+        # disconnected. The status light reads it: a swing is only worth
+        # making while this is True.
+        self.rolling_buffer_armed = False
         self.last_hardware_trigger_first_byte_timestamp: Optional[float] = None
         # Most recent OPS-clock -> host-epoch sync (see read_clock_sync).
         self.last_clock_sync: Optional[dict] = None
@@ -468,6 +476,7 @@ class OPS243Radar:
 
     def disconnect(self):
         """Disconnect from the radar sensor."""
+        self.rolling_buffer_armed = False
         if self.serial and self.serial.is_open:
             self.serial.close()
             self.serial = None
@@ -1618,6 +1627,8 @@ class OPS243Radar:
                     chunk = bytes(idle_bytes[capture_start:])
                     idle_bytes.clear()
                     capture_started = True
+                    # The board stops sampling to dump and idles until re-armed.
+                    self.rolling_buffer_armed = False
                     if recovery_required:
                         self._hardware_trigger_recovery_required = False
                         logger.info("[OPS] Re-arm recovery: fresh capture boundary found")
@@ -1689,7 +1700,7 @@ class OPS243Radar:
 
         return full_response
 
-    def rearm_rolling_buffer(self, pre_trigger_segments: int = 16):
+    def rearm_rolling_buffer(self, pre_trigger_segments: int = 16) -> bool:
         """
         Re-arm rolling buffer for next capture.
 
@@ -1703,7 +1714,13 @@ class OPS243Radar:
         Args:
             pre_trigger_segments: Number of pre-trigger segments (0-32).
                 Each segment = 128 samples = ~4.27ms at 30ksps.
+
+        Returns:
+            True when every re-arm command was written, False when a write
+            timed out and the board may still be idle. ``rolling_buffer_armed``
+            records the same answer.
         """
+        self.rolling_buffer_armed = False
         if not self.serial or not self.serial.is_open:
             raise ConnectionError("Not connected to radar")
 
@@ -1773,10 +1790,12 @@ class OPS243Radar:
                 "[OPS] Re-arm write timed out — radar busy (mid-dump?); "
                 "re-arm will be retried after the next capture cycle"
             )
-            return
+            return False
 
         self.serial.reset_input_buffer()
+        self.rolling_buffer_armed = True
         logger.info("[OPS] Rolling buffer re-armed (S#%d)", pre_trigger_segments)
+        return True
 
     def _drain_rearm_serial(self, quiet_period: float = 0.2):
         """Drain any tail bytes before changing the board mode.
@@ -1833,6 +1852,7 @@ class OPS243Radar:
         them when changing modes.  This path intentionally does not enable
         the optional SZ board-processing stream.
         """
+        self.rolling_buffer_armed = False
         if not self.serial or not self.serial.is_open:
             raise ConnectionError("Not connected to radar")
 
@@ -1878,6 +1898,7 @@ class OPS243Radar:
 
         # A 4,096-sample buffer takes about 136.5 ms at 30 ksps.
         time.sleep(0.3)
+        self.rolling_buffer_armed = True
         logger.info(
             "[OPS] Internal speed trigger armed (ST%s, S#%d, S=%d, SM%d)",
             signed_threshold,
@@ -1934,6 +1955,7 @@ class OPS243Radar:
         serial write timeout is recoverable: the capture is valid and the next
         cycle retries.
         """
+        self.rolling_buffer_armed = False
         if not self.serial or not self.serial.is_open:
             raise ConnectionError("Not connected to radar")
         if sample_rate_ksps != 30:
@@ -1957,6 +1979,7 @@ class OPS243Radar:
             return False
 
         time.sleep((4096 / (sample_rate_ksps * 1000)) + 0.05)
+        self.rolling_buffer_armed = True
         logger.info("[OPS] Internal speed trigger re-armed (PA)")
         return True
 

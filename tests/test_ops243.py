@@ -1053,3 +1053,105 @@ class TestInternalSpeedTrigger:
         assert response == ""
         assert radar.last_hardware_trigger_orphaned_dump is False
         assert time.time() - started >= 0.6
+
+
+class TestRollingBufferArmedFlag:
+    """``rolling_buffer_armed`` tells the status light whether a swing now gets a dump.
+
+    It must be True only after an arm whose every command was written, and
+    False once a dump starts, after a timed-out re-arm, and when disconnected.
+    A light that said "ready" over an idle board would invite unmeasured swings.
+    """
+
+    @staticmethod
+    def _radar(serial_obj, *, armed):
+        radar = OPS243Radar.__new__(OPS243Radar)
+        radar.serial = serial_obj
+        radar.last_hardware_trigger_first_byte_timestamp = None
+        radar.rolling_buffer_armed = armed
+        return radar
+
+    def test_a_new_driver_is_not_armed(self):
+        assert OPS243Radar(port="/dev/null").rolling_buffer_armed is False
+
+    def test_rearm_that_writes_every_command_arms(self, monkeypatch):
+        monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+        radar = self._radar(_InternalTriggerSerial(), armed=False)
+
+        assert radar.rearm_rolling_buffer(16) is True
+        assert radar.rolling_buffer_armed is True
+        assert radar.serial.writes == [b"PA", b"S#16\r", b"PA"]
+
+    def test_rearm_write_timeout_leaves_the_board_unarmed(self, monkeypatch):
+        """The field "radar busy" case: the board may still be idle afterwards."""
+        monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+        radar = self._radar(_InternalTriggerSerial(fail_write=True), armed=True)
+
+        assert radar.rearm_rolling_buffer(16) is False
+        assert radar.rolling_buffer_armed is False
+
+    def test_rearm_without_a_connection_is_not_armed(self):
+        radar = self._radar(None, armed=True)
+
+        with pytest.raises(ConnectionError):
+            radar.rearm_rolling_buffer(16)
+        assert radar.rolling_buffer_armed is False
+
+    def test_only_a_starting_dump_disarms_the_board(self):
+        """The board stops sampling to dump and idles until the next re-arm.
+
+        A wait that times out with nothing sent leaves the board sampling.
+        """
+        dump = b"".join(TestWaitForHardwareTrigger._DUMP)
+        radar = self._radar(_ScheduledSerial([]), armed=True)
+
+        assert radar.wait_for_hardware_trigger(timeout=0.05) == ""
+        assert radar.rolling_buffer_armed is True
+
+        radar.serial = _ScheduledSerial([(0.0, dump)])
+        assert radar.wait_for_hardware_trigger(timeout=1.0) == dump.decode("ascii")
+        assert radar.rolling_buffer_armed is False
+
+    def test_disconnect_disarms(self):
+        class ClosingSerial:
+            is_open = True
+
+            def close(self):
+                self.is_open = False
+
+        radar = self._radar(ClosingSerial(), armed=True)
+
+        radar.disconnect()
+
+        assert radar.rolling_buffer_armed is False
+
+    def test_internal_trigger_configure_arms(self, monkeypatch):
+        monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+        radar = self._radar(_InternalTriggerSerial(), armed=False)
+        monkeypatch.setattr(
+            radar,
+            "_send_command",
+            lambda command: '{"Version":"1.3.2"}' if command == "?V" else "",
+        )
+
+        radar.configure_for_internal_speed_trigger(trigger_threshold_mph=25)
+
+        assert radar.rolling_buffer_armed is True
+
+    def test_internal_trigger_configure_failure_is_not_armed(self, monkeypatch):
+        radar = self._radar(_InternalTriggerSerial(), armed=True)
+        monkeypatch.setattr(radar, "_probe_firmware_version", lambda: "1.3.1")
+
+        with pytest.raises(RuntimeError):
+            radar.configure_for_internal_speed_trigger()
+        assert radar.rolling_buffer_armed is False
+
+    @pytest.mark.parametrize(("fail_write", "armed"), [(False, True), (True, False)])
+    def test_internal_trigger_rearm_sets_the_flag(self, monkeypatch, fail_write, armed):
+        monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+        radar = self._radar(_InternalTriggerSerial(fail_write=fail_write), armed=not armed)
+        radar._internal_speed_trigger_config = (25.0, 6, 40, 30)
+        monkeypatch.setattr(radar, "_drain_rearm_serial", lambda: None)
+
+        assert radar.rearm_internal_speed_trigger() is armed
+        assert radar.rolling_buffer_armed is armed
