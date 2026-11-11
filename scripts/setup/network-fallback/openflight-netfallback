@@ -62,8 +62,14 @@ on_hotspot() {
     [ "$(active_con)" = "$HOTSPOT" ]
 }
 
+# Devices on the hotspot. iw knows exactly; without it, devices the Pi has
+# heard from recently (neighbour table) are a close stand-in.
 stations() {
-    iw dev "$IFACE" station dump 2>/dev/null | grep -c '^Station' || true
+    if command -v iw >/dev/null 2>&1; then
+        iw dev "$IFACE" station dump 2>/dev/null | grep -c '^Station' || true
+    else
+        ip neigh show dev "$IFACE" 2>/dev/null | grep -cvE 'FAILED|INCOMPLETE|^$' || true
+    fi
 }
 
 hotspot_up() {

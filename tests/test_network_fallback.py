@@ -260,7 +260,9 @@ if [ "$*" = "reg get" ]; then printf 'global\ncountry %s: DFS-FCC\n' "$(cat "$ST
 """
 
 
-def _installer(tmp_path, *args, profiles="Home\n", country="US", sim_host="Jordans-MacBook-Pro-2.local"):
+def _installer(
+    tmp_path, *args, profiles="Home\n", country="US", sim_host="Jordans-MacBook-Pro-2.local", with_iw=True
+):
     stub = tmp_path / "stub"
     bin_dir = tmp_path / "bin"
     stub.mkdir(exist_ok=True)
@@ -271,6 +273,8 @@ def _installer(tmp_path, *args, profiles="Home\n", country="US", sim_host="Jorda
     for name, body in (("nmcli", INSTALL_NMCLI), ("iw", INSTALL_IW)):
         (bin_dir / name).write_text(body)
         (bin_dir / name).chmod(0o755)
+    if not with_iw:
+        (bin_dir / "iw").unlink()
     sim = tmp_path / "sim.json"
     sim.write_text(
         '{"connectors": [{"type": "gspro", "enabled": true, "host": "%s", "port": 921}]}'
@@ -320,3 +324,23 @@ def test_installer_uses_2_4ghz_without_a_wifi_country(tmp_path):
 def test_installer_skips_the_reservation_for_an_address_host(tmp_path):
     out, _ = _installer(tmp_path, sim_host="10.0.0.132")
     assert "dhcp-host" not in out
+
+
+def test_counts_hotspot_devices_without_iw(pi):
+    (pi.bin / "iw").unlink()
+    ip = pi.bin / "ip"
+    ip.write_text(
+        "#!/bin/bash\n"
+        "printf '10.42.0.10 lladdr aa:bb REACHABLE\\n10.42.0.11 FAILED\\n' \n"
+    )
+    ip.chmod(0o755)
+    pi.set(con=HOTSPOT, state="100")
+    assert "hotspot (1 connected)" in pi.run("--status")
+
+
+def test_installer_adds_iw_when_missing(tmp_path):
+    out, _ = _installer(tmp_path)
+    assert "would run: apt-get install -y iw" not in out  # the stub provides iw
+    out, _ = _installer(tmp_path, with_iw=False)
+    assert "would run: apt-get install -y iw" in out
+    assert "802-11-wireless.band bg" in out

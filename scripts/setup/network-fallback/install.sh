@@ -100,6 +100,11 @@ if [ "$DRY_RUN" = 0 ] && [ "$(id -u)" != 0 ]; then
     exit 1
 fi
 command -v nmcli >/dev/null || { echo "NetworkManager (nmcli) is required" >&2; exit 1; }
+# iw counts who is on the hotspot and turns power saving off right away. Not
+# on every image; the fallback copes without it, so a failed install only warns.
+if ! command -v iw >/dev/null 2>&1; then
+    run apt-get install -y iw || echo "could not install iw; carrying on without it" >&2
+fi
 
 if [ -z "$SIM_HOST" ] && [ -f "$SIM_CONFIG" ]; then
     SIM_HOST="$(python3 -c '
@@ -114,7 +119,10 @@ case "$SIM_HOST" in
 esac
 
 if [ "$BAND" = auto ]; then
-    country="$(iw reg get 2>/dev/null | sed -n 's/^country \([A-Z0-9]*\):.*/\1/p' | head -n 1)"
+    country="$( (iw reg get 2>/dev/null || true) | sed -n 's/^country \([A-Z0-9]*\):.*/\1/p' | head -n 1)"
+    if [ -z "$country" ] && command -v raspi-config >/dev/null 2>&1; then
+        country="$(raspi-config nonint get_wifi_country 2>/dev/null || true)"
+    fi
     if [ -n "$country" ] && [ "$country" != "00" ]; then BAND=a; else BAND=bg; fi
 fi
 if [ "$BAND" = a ]; then CHANNEL=36; else CHANNEL=6; fi
