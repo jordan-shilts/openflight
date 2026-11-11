@@ -1146,6 +1146,23 @@ class TestRollingBufferArmedFlag:
             radar.configure_for_internal_speed_trigger()
         assert radar.rolling_buffer_armed is False
 
+    def test_entering_rolling_buffer_mode_arms(self, monkeypatch):
+        """The GC/PA sequence leaves the board sampling, ready for a trigger."""
+        monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+        radar = self._radar(_InternalTriggerSerial(), armed=False)
+
+        radar.enter_rolling_buffer_mode(pre_trigger_segments=16, sample_rate_ksps=30)
+
+        assert radar.rolling_buffer_armed is True
+
+    def test_entering_rolling_buffer_mode_that_fails_is_not_armed(self, monkeypatch):
+        monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+        radar = self._radar(_InternalTriggerSerial(fail_write=True), armed=True)
+
+        with pytest.raises(serial.SerialTimeoutException):
+            radar.enter_rolling_buffer_mode(pre_trigger_segments=16, sample_rate_ksps=30)
+        assert radar.rolling_buffer_armed is False
+
     @pytest.mark.parametrize(("fail_write", "armed"), [(False, True), (True, False)])
     def test_internal_trigger_rearm_sets_the_flag(self, monkeypatch, fail_write, armed):
         monkeypatch.setattr(time, "sleep", lambda _seconds: None)

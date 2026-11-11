@@ -246,11 +246,11 @@ class OPS243Radar:
         self._hardware_trigger_recovery_required = False
         # Whether the board is sampling into its rolling buffer, so a trigger
         # now produces a dump. True only after an arm whose commands were all
-        # written (rearm_rolling_buffer, the internal speed trigger's configure
-        # and re-arm); False once a dump starts (the board then idles until
-        # re-armed), after an arm whose writes timed out, and when
-        # disconnected. The status light reads it: a swing is only worth
-        # making while this is True.
+        # written (enter_rolling_buffer_mode, rearm_rolling_buffer, the
+        # internal speed trigger's configure and re-arm); False once a dump
+        # starts (the board then idles until re-armed), after an arm whose
+        # writes timed out, and when disconnected. The status light reads it:
+        # a swing is only worth making while this is True.
         self.rolling_buffer_armed = False
         self.last_hardware_trigger_first_byte_timestamp: Optional[float] = None
         # Most recent OPS-clock -> host-epoch sync (see read_clock_sync).
@@ -1279,6 +1279,7 @@ class OPS243Radar:
                 Each segment = 128 samples = ~4.27ms at 30ksps.
                 Default 12 gives ~51ms pre-trigger, ~85ms post-trigger.
         """
+        self.rolling_buffer_armed = False
         if not self.serial or not self.serial.is_open:
             raise ConnectionError("Not connected to radar")
 
@@ -1332,6 +1333,7 @@ class OPS243Radar:
         # At 30ksps, 4096 samples takes ~137ms, but we wait a bit longer
         # to ensure stable state before accepting triggers
         time.sleep(0.3)
+        self.rolling_buffer_armed = True
 
         print(
             f"[RADAR] Rolling buffer mode ACTIVE (S#{pre_trigger_segments}, {sample_rate_ksps}ksps)"
