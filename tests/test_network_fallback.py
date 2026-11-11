@@ -254,6 +254,11 @@ case "$*" in
 esac
 """
 
+# raspi-config's answer when iw can't give the country (empty for "00").
+INSTALL_RASPI_CONFIG = r"""#!/bin/bash
+c="$(cat "$STUB/country")"; [ "$c" = 00 ] || echo "$c"
+"""
+
 INSTALL_IW = r"""#!/bin/bash
 echo "iw $*" >>"$STUB/calls"
 if [ "$*" = "reg get" ]; then printf 'global\ncountry %s: DFS-FCC\n' "$(cat "$STUB/country")"; fi
@@ -270,7 +275,11 @@ def _installer(
     (stub / "calls").write_text("")
     (stub / "profiles").write_text(profiles)
     (stub / "country").write_text(country)
-    for name, body in (("nmcli", INSTALL_NMCLI), ("iw", INSTALL_IW)):
+    for name, body in (
+        ("nmcli", INSTALL_NMCLI),
+        ("iw", INSTALL_IW),
+        ("raspi-config", INSTALL_RASPI_CONFIG),
+    ):
         (bin_dir / name).write_text(body)
         (bin_dir / name).chmod(0o755)
     if not with_iw:
@@ -341,6 +350,9 @@ def test_counts_hotspot_devices_without_iw(pi):
 def test_installer_adds_iw_when_missing(tmp_path):
     out, _ = _installer(tmp_path)
     assert "would run: apt-get install -y iw" not in out  # the stub provides iw
-    out, _ = _installer(tmp_path, with_iw=False)
+    out, _ = _installer(tmp_path, with_iw=False, country="DE")
     assert "would run: apt-get install -y iw" in out
+    # the country comes from raspi-config instead, so 5 GHz still
+    assert "802-11-wireless.band a 802-11-wireless.channel 36" in out
+    out, _ = _installer(tmp_path, with_iw=False, country="00")
     assert "802-11-wireless.band bg" in out
