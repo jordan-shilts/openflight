@@ -20,10 +20,13 @@ import {
   flightTimeAt,
   flownBy,
   formatTick,
+  lateralExtent,
   polylinePoints,
+  projectLateral,
   projectX,
   projectY,
   toFlightPoints,
+  topViewPoints,
   type ChartFrame,
 } from './flightChart';
 
@@ -58,12 +61,21 @@ function chartFrame(size: ChartSize): ChartFrame {
   };
 }
 
+/** Same left and right as the side view, so one distance lines up in both. */
+function topViewFrame(size: ChartSize): ChartFrame {
+  const tickPx = size.rem * TICK_REM;
+  return { ...chartFrame(size), top: tickPx * 0.9, bottom: tickPx * 0.9 };
+}
+
+/** Used until the first measurement, and for server rendering in tests. */
+const DEFAULT_TOP_SIZE: ChartSize = { width: 800, height: 72, rem: 16 };
+
 function prefersReducedMotion(): boolean {
   return typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
 }
 
-function useChartSize(ref: RefObject<HTMLDivElement | null>): ChartSize {
-  const [size, setSize] = useState(DEFAULT_SIZE);
+function useChartSize(ref: RefObject<HTMLDivElement | null>, initial: ChartSize = DEFAULT_SIZE): ChartSize {
+  const [size, setSize] = useState(initial);
 
   useLayoutEffect(() => {
     const element = ref.current;
@@ -78,12 +90,12 @@ function useChartSize(ref: RefObject<HTMLDivElement | null>): ChartSize {
       setSize({
         width: element.clientWidth,
         height: element.clientHeight,
-        rem: parseFloat(getComputedStyle(document.documentElement).fontSize) || DEFAULT_SIZE.rem,
+        rem: parseFloat(getComputedStyle(document.documentElement).fontSize) || initial.rem,
       });
     });
     observer.observe(element);
     return () => observer.disconnect();
-  }, [ref]);
+  }, [ref, initial.rem]);
 
   return size;
 }
@@ -116,14 +128,15 @@ function useFlightTime(flightTimeS: number, animate: boolean): number {
 function FlightChart({
   trajectory,
   ghosts,
-  animate,
+  time,
   unitSystem,
   carryLabel,
   ariaLabel,
 }: {
   trajectory: ShotTrajectory;
   ghosts: ShotTrajectory[];
-  animate: boolean;
+  /** Seconds of flight drawn so far. */
+  time: number;
   unitSystem: UnitSystem;
   carryLabel: string;
   ariaLabel: string;
@@ -131,7 +144,6 @@ function FlightChart({
   const { t } = useI18n();
   const chartRef = useRef<HTMLDivElement>(null);
   const size = useChartSize(chartRef);
-  const time = useFlightTime(trajectory.flight_time_s, animate);
 
   const points = useMemo(() => toFlightPoints(trajectory, unitSystem), [trajectory, unitSystem]);
   const ghostPoints = useMemo(() => ghosts.map((ghost) => toFlightPoints(ghost, unitSystem)), [ghosts, unitSystem]);
@@ -259,7 +271,185 @@ function FlightChart({
   );
 }
 
-/** Side view of the latest shot over the player's earlier flights; it lands at the Carry tile's value. */
+/** How far the flight lands from the target line, e.g. "12 yds right". */
+function offlineLabel(
+  trajectory: ShotTrajectory,
+  unitSystem: UnitSystem,
+  t: ReturnType<typeof useI18n>['t']
+): string {
+  const lateralYd = trajectory.points[trajectory.points.length - 1][2];
+  const distance = formatDistance(Math.abs(lateralYd), unitSystem, 0);
+  if (Number(distance) === 0) {
+    return t('flight.onLine');
+  }
+  return t(lateralYd > 0 ? 'flight.offlineRight' : 'flight.offlineLeft', {
+    distance,
+    unit: getDistanceUnit(unitSystem),
+  });
+}
+
+/** Looking down on the flight: the target line along the middle, the ball curving off it. */
+function FlightTopView({
+  trajectory,
+  ghosts,
+  time,
+  unitSystem,
+}: {
+  trajectory: ShotTrajectory;
+  ghosts: ShotTrajectory[];
+  time: number;
+  unitSystem: UnitSystem;
+}) {
+  const { t } = useI18n();
+  const chartRef = useRef<HTMLDivElement>(null);
+  const size = useChartSize(chartRef, DEFAULT_TOP_SIZE);
+
+  const points = useMemo(() => toFlightPoints(trajectory, unitSystem), [trajectory, unitSystem]);
+  const ghostPoints = useMemo(() => ghosts.map((ghost) => toFlightPoints(ghost, unitSystem)), [ghosts, unitSystem]);
+  const axes = useMemo(() => flightAxes([points, ...ghostPoints]), [points, ghostPoints]);
+  const extent = useMemo(() => lateralExtent([points, ...ghostPoints]), [points, ghostPoints]);
+  const frame = useMemo(() => topViewFrame(size), [size]);
+  const ghostLines = useMemo(
+    () => ghostPoints.map((ghost) => topViewPoints(ghost, axes, extent, frame)),
+    [ghostPoints, axes, extent, frame]
+  );
+
+  const tickPx = size.rem * TICK_REM;
+  const ballRadius = size.rem * 0.3;
+  const flown = flownBy(points, time);
+  const ball = flown[flown.length - 1];
+  const landed = time >= trajectory.flight_time_s;
+  const plotLeft = frame.left;
+  const plotRight = frame.width - frame.right;
+  const targetLine = projectLateral(0, extent, frame);
+  const ballX = projectX(ball.distance, axes, frame);
+  const ballY = projectLateral(ball.lateral, extent, frame);
+  const labelAfter = ballX < plotLeft + (plotRight - plotLeft) * 0.25;
+  // The label sits on the far side of the ball from the target line, clear of
+  // the curve, until the ball is too near the strip's edge for it to fit there.
+  const labelBelow = ballY + ballRadius * 1.6 + tickPx;
+  const labelAbove = ballY - ballRadius * 1.6;
+  const fitsBelow = labelBelow <= frame.height - tickPx * 0.3;
+  const fitsAbove = labelAbove - tickPx >= tickPx * 0.3;
+  const labelY = ball.lateral >= 0 ? (fitsBelow ? labelBelow : labelAbove) : fitsAbove ? labelAbove : labelBelow;
+  const offline = offlineLabel(trajectory, unitSystem, t);
+  const extentLabel = `${formatTick(extent)} ${getDistanceUnit(unitSystem)}`;
+
+  return (
+    <div ref={chartRef} className="flight-view__top">
+      <svg
+        className="flight-chart flight-chart--top"
+        viewBox={`0 0 ${size.width} ${size.height}`}
+        role="img"
+        aria-label={t('flight.topLabel', { offline })}
+      >
+        <g className="flight-chart__grid" aria-hidden="true">
+          <line className="flight-chart__target" x1={plotLeft} x2={plotRight} y1={targetLine} y2={targetLine} />
+          <text
+            className="flight-chart__tick"
+            x={plotLeft - tickPx * 0.5}
+            y={projectLateral(-extent, extent, frame) + tickPx * 0.9}
+            textAnchor="end"
+          >
+            {t('flight.leftShort')}
+          </text>
+          <text
+            className="flight-chart__tick"
+            x={plotLeft - tickPx * 0.5}
+            y={projectLateral(extent, extent, frame)}
+            textAnchor="end"
+          >
+            {t('flight.rightShort')}
+          </text>
+          {/* Top-left stays clear: every flight starts on the target line. */}
+          <text
+            className="flight-chart__tick"
+            x={plotLeft + tickPx * 0.6}
+            y={projectLateral(-extent, extent, frame) + tickPx * 0.9}
+            textAnchor="start"
+          >
+            {`± ${extentLabel}`}
+          </text>
+        </g>
+
+        <g className="flight-chart__ghosts" aria-hidden="true">
+          {ghostLines.map((line, index) => (
+            <polyline key={index} className="flight-chart__ghost flight-chart__ghost--top" points={line} />
+          ))}
+        </g>
+
+        <polyline
+          className="flight-chart__flight flight-chart__flight--top"
+          points={topViewPoints(flown, axes, extent, frame)}
+        />
+        <circle className="flight-chart__ball flight-chart__ball--top" cx={ballX} cy={ballY} r={ballRadius} />
+        {landed ? (
+          <text
+            className="flight-chart__label flight-chart__offline"
+            x={labelAfter ? ballX + ballRadius * 2 : ballX - ballRadius * 2}
+            y={labelY}
+            textAnchor={labelAfter ? 'start' : 'end'}
+          >
+            {offline}
+          </text>
+        ) : null}
+      </svg>
+    </div>
+  );
+}
+
+/** Both views play the same flight clock, so the ball is at one place in each. */
+function FlightCharts({
+  trajectory,
+  ghosts,
+  animate,
+  showTopView,
+  unitSystem,
+  carryLabel,
+  ariaLabel,
+}: {
+  trajectory: ShotTrajectory;
+  ghosts: ShotTrajectory[];
+  animate: boolean;
+  showTopView: boolean;
+  unitSystem: UnitSystem;
+  carryLabel: string;
+  ariaLabel: string;
+}) {
+  const time = useFlightTime(trajectory.flight_time_s, animate);
+  return (
+    <>
+      <FlightChart
+        trajectory={trajectory}
+        ghosts={ghosts}
+        time={time}
+        unitSystem={unitSystem}
+        carryLabel={carryLabel}
+        ariaLabel={ariaLabel}
+      />
+      {showTopView ? (
+        <FlightTopView trajectory={trajectory} ghosts={ghosts} time={time} unitSystem={unitSystem} />
+      ) : null}
+    </>
+  );
+}
+
+/**
+ * A top view only says something when the ball's direction was measured: with
+ * an estimated start line and no spin axis every shot would be drawn dead straight.
+ */
+function hasMeasuredDirection(shot: Shot): boolean {
+  const startMeasured =
+    shot.launch_angle_horizontal !== null &&
+    shot.angle_source !== 'estimated' &&
+    shot.launch_angle_horizontal_source !== 'estimated';
+  return startMeasured || shot.spin_axis_deg !== null;
+}
+
+/**
+ * Side view of the latest shot over the player's earlier flights; it lands at
+ * the Carry tile's value. A top view joins it when the direction was measured.
+ */
 export function FlightView({ shot, earlierShots, animate, unitSystem }: FlightViewProps) {
   const { t } = useI18n();
   // An enriched shot can get its trajectory after mounting; play it when it lands.
@@ -300,10 +490,11 @@ export function FlightView({ shot, earlierShots, animate, unitSystem }: FlightVi
 
   return (
     <div className="flight-view">
-      <FlightChart
+      <FlightCharts
         trajectory={trajectory}
         ghosts={ghosts}
         animate={animate || mountedWithoutTrajectory}
+        showTopView={hasMeasuredDirection(shot)}
         unitSystem={unitSystem}
         carryLabel={`${carry} ${distanceUnit}`}
         ariaLabel={t('flight.chartLabel', { carry, distanceUnit, apex, heightUnit })}

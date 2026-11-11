@@ -136,6 +136,12 @@ export const fr: Messages = {
   'flight.putt': 'Pas de vol pour un putt',
   'flight.puttDetail': 'La balle a roulé {distance} {unit} sur le green',
   'flight.chartLabel': 'Vue latérale du vol : carry {carry} {distanceUnit}, apogée {apex} {heightUnit}',
+  'flight.topLabel': 'Vue de dessus du vol : {offline}',
+  'flight.offlineRight': '{distance} {unit} à droite',
+  'flight.offlineLeft': '{distance} {unit} à gauche',
+  'flight.onLine': 'Sur la ligne de cible',
+  'flight.leftShort': 'G',
+  'flight.rightShort': 'D',
 
   'stats.filterByClub': 'Filtrer par club',
   'stats.all': 'Tous ({count})',

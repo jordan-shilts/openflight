@@ -136,6 +136,12 @@ export const pt: Messages = {
   'flight.putt': 'Um putt não tem voo',
   'flight.puttDetail': 'Rolou {distance} {unit} pelo green',
   'flight.chartLabel': 'Vista lateral do voo: carry {carry} {distanceUnit}, altura máx. {apex} {heightUnit}',
+  'flight.topLabel': 'Vista superior do voo: {offline}',
+  'flight.offlineRight': '{distance} {unit} à direita',
+  'flight.offlineLeft': '{distance} {unit} à esquerda',
+  'flight.onLine': 'Na linha do alvo',
+  'flight.leftShort': 'E',
+  'flight.rightShort': 'D',
 
   'stats.filterByClub': 'Filtrar por taco',
   'stats.all': 'Todos ({count})',

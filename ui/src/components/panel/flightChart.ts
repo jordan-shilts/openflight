@@ -6,6 +6,8 @@ import { convertDistanceFromYards, convertHeightFromFeet } from '../../utils/uni
 export interface FlightPoint {
   distance: number;
   height: number;
+  /** Offset from the target line; right of it is positive. */
+  lateral: number;
   time: number;
 }
 
@@ -32,14 +34,19 @@ const MIN_HEIGHT = 10;
 const HEIGHT_HEADROOM = 1.3;
 const MAX_DISTANCE_TICKS = 6;
 const MAX_HEIGHT_TICKS = 4;
+// A top view never zooms in past this half-width, so a near-straight shot looks straight.
+const MIN_LATERAL = 10;
+const LATERAL_HEADROOM = 1.25;
+const MAX_LATERAL_TICKS = 2;
 const ANIMATION_SPEEDUP = 2;
 const MIN_ANIMATION_MS = 1200;
 const MAX_ANIMATION_MS = 3500;
 
 export function toFlightPoints(trajectory: ShotTrajectory, unitSystem: UnitSystem): FlightPoint[] {
-  return trajectory.points.map(([distanceYd, heightFt, , timeS]) => ({
+  return trajectory.points.map(([distanceYd, heightFt, lateralYd, timeS]) => ({
     distance: convertDistanceFromYards(distanceYd, unitSystem),
     height: convertHeightFromFeet(heightFt, unitSystem),
+    lateral: convertDistanceFromYards(lateralYd, unitSystem),
     time: timeS,
   }));
 }
@@ -120,11 +127,40 @@ export function flownBy(points: FlightPoint[], time: number): FlightPoint[] {
     flown.push({
       distance: previous.distance + fraction * (point.distance - previous.distance),
       height: previous.height + fraction * (point.height - previous.height),
+      lateral: previous.lateral + fraction * (point.lateral - previous.lateral),
       time,
     });
     break;
   }
   return flown;
+}
+
+/** Half-width of the top view: one symmetric scale for every drawn flight. */
+export function lateralExtent(flights: FlightPoint[][]): number {
+  let widest = 0;
+  for (const flight of flights) {
+    for (const point of flight) {
+      widest = Math.max(widest, Math.abs(point.lateral));
+    }
+  }
+  const span = Math.max(MIN_LATERAL, widest * LATERAL_HEADROOM);
+  const step = niceStep(span, MAX_LATERAL_TICKS);
+  return Math.ceil(span / step) * step;
+}
+
+/** Top view: the target line runs along the middle and right of it is drawn below. */
+export function projectLateral(lateral: number, extent: number, frame: ChartFrame): number {
+  const half = (frame.height - frame.top - frame.bottom) / 2;
+  return frame.top + half + (lateral / extent) * half;
+}
+
+export function topViewPoints(points: FlightPoint[], axes: FlightAxes, extent: number, frame: ChartFrame): string {
+  return points
+    .map(
+      (point) =>
+        `${projectX(point.distance, axes, frame).toFixed(1)},${projectLateral(point.lateral, extent, frame).toFixed(1)}`
+    )
+    .join(' ');
 }
 
 export function apexPoint(points: FlightPoint[]): FlightPoint | null {

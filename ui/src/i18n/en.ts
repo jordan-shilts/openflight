@@ -134,6 +134,12 @@ export const en = {
   'flight.putt': 'No flight for a putt',
   'flight.puttDetail': 'It rolled {distance} {unit} along the green',
   'flight.chartLabel': 'Side view of the flight: carry {carry} {distanceUnit}, apex {apex} {heightUnit}',
+  'flight.topLabel': 'Top view of the flight: {offline}',
+  'flight.offlineRight': '{distance} {unit} right',
+  'flight.offlineLeft': '{distance} {unit} left',
+  'flight.onLine': 'On the target line',
+  'flight.leftShort': 'L',
+  'flight.rightShort': 'R',
 
   'stats.filterByClub': 'Filter by club',
   'stats.all': 'All ({count})',

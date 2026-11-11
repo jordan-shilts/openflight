@@ -716,6 +716,21 @@
   background: var(--color-surface);
 }
 
+/* Top view: a strip under the side view, drawn only when the direction was measured. */
+.flight-view__top {
+  position: relative;
+  flex: 0 0 auto;
+  height: clamp(2.75rem, 16vh, 4.5rem);
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+}
+
+.flight-chart__target {
+  stroke: color-mix(in srgb, var(--color-text) 28%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 6 5;
+}
+
 .flight-chart {
   position: absolute;
   inset: 0;

@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Draw and fade from the D-plane.** A new `openflight.d_plane` module derives
+  face angle, face-to-path, dynamic loft, spin loft and the spin axis from
+  measured launch and trusted club delivery. The camera-fused club path (tier
+  high or medium) now counts, so an IWR6843 + camera rig gets a spin axis and a
+  curving flight without a K-LD7. The spin axis replaces the earlier
+  `launch direction - club path` rule, which read about 40% of the true tilt on
+  an iron; against the committed TrackMan session the new one is within 0.6° on
+  the 7-iron and 0.1° on the pitching wedge. Drivers, woods and hybrids get no
+  spin axis unless `--wood-spin-axis` is passed, because their curve depends as
+  much on strike location, which nothing measures. See
+  [Curve: spin axis from the D-plane](how-it-works/ballistics.md#curve-spin-axis-from-the-d-plane).
+- **Club delivery to the simulator.** GSPro Open Connect shots now carry the
+  camera-fused club path (`ClubData.Path`) at tier high or medium, and the
+  derived `ClubData.FaceToTarget` and `ClubData.Loft`. The sim badges label
+  them Face and Loft.
+- **Top view on Flight.** When the ball's direction was measured, Live's Flight
+  view adds a strip under the side view showing the flight from above, the
+  target line, and how far left or right it landed.
 - **Attack angle to the simulator.** A shot sent over GSPro Open Connect now
   carries the camera's experimental attack angle (`ClubData.AngleOfAttack`)
   when its confidence tier is high or medium; low and withheld estimates stay
