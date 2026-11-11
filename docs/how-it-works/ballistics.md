@@ -155,7 +155,9 @@ When the simulator runs, the UI shot payload also carries a `trajectory`: up to
 60 points (`[distance_yd, height_ft, lateral_yd, time_s]`) taken from that same
 flight, plus apex height, landing angle, flight time and carry. The Live
 screen's Flight view draws it, so its landing point always matches the Carry
-tile. Mock shots (`--mock`) run the simulator too. The points stay out of the
+tile. Under the side-on arc, a strip shows the same flight from above with the
+target line and how far left or right it landed; the strip appears only when
+the ball's direction was measured. Mock shots (`--mock`) run the simulator too. The points stay out of the
 session log, cloud uploads, phone events and simulator connectors.
 
 ## Disabling it
