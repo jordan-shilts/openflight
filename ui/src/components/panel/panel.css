@@ -2197,8 +2197,150 @@
     font-size: 0.63em;
   }
 
+  /* A drag on a list must not pull the page into a browser refresh. */
+  html,
+  body {
+    overscroll-behavior: none;
+  }
+
+  .menu-sheet {
+    left: 16px;
+    right: 16px;
+    width: auto;
+  }
+
   .menu-sheet__phone-link {
     display: none;
+  }
+
+  .shutdown-dialog,
+  .shutdown-dialog--pending {
+    min-width: 0;
+    margin-inline: 16px;
+    padding: 1.5rem 1rem;
+  }
+
+  .shutdown-dialog__buttons {
+    flex-wrap: wrap;
+  }
+
+  .shutdown-dialog__confirm,
+  .shutdown-dialog__cancel {
+    flex: 1 1 auto;
+    padding-inline: 0.75rem;
+  }
+
+  .stats-panel__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(3, 1fr);
+  }
+
+  .stats-panel__grid--of-4 {
+    grid-template-rows: repeat(2, 1fr);
+  }
+
+  .stats-panel__grid .metric-card {
+    padding: 16px;
+  }
+
+  .stats-panel__grid .metric-card__value {
+    font-size: clamp(1.75rem, 11vw, 3rem);
+  }
+
+  .profiles-panel__grid {
+    grid-template-columns: minmax(0, 1fr);
+    padding-inline: 16px;
+  }
+
+  /* Shots: number, player and club on one line, the five values on the next. */
+  .panel.shots-panel .panel-header {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .panel.shots-panel .panel-header__identity {
+    flex: 1 0 100%;
+  }
+
+  .panel.shots-panel .panel-header__actions {
+    flex: 1 0 100%;
+  }
+
+  .panel.shots-panel .panel-header__club {
+    flex-shrink: 0;
+  }
+
+  .panel.shots-panel .panel-header__actions .panel-action {
+    flex: 1;
+    justify-content: center;
+    height: 44px;
+  }
+
+  .shots-panel__columns,
+  .shots-panel__row-main {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0 6px;
+  }
+
+  .shots-panel__columns {
+    padding-inline: 16px;
+  }
+
+  .shots-panel__columns > :not(.shots-panel__num) {
+    display: none;
+  }
+
+  .shots-panel__row {
+    position: relative;
+    padding-inline: 16px;
+  }
+
+  .shots-panel__row-main {
+    grid-template-rows: 52px auto;
+    height: auto;
+    padding-bottom: 12px;
+  }
+
+  .shots-panel__index,
+  .shots-panel__profile {
+    grid-area: 1 / 1 / 2 / -1;
+  }
+
+  .shots-panel__profile {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 8px;
+    padding-inline: 2.25rem 7rem;
+  }
+
+  .shots-panel__value {
+    font-size: 1.125rem;
+  }
+
+  .shots-panel__actions {
+    position: absolute;
+    top: 4px;
+    right: 16px;
+    width: auto;
+    gap: 6px;
+  }
+
+  .shots-panel__replay,
+  .shots-panel__delete {
+    width: 52px;
+  }
+
+  .shots-panel__validation {
+    padding-inline: 16px;
+  }
+
+  .shots-panel__field input,
+  .shots-panel__field select {
+    height: 44px;
+  }
+
+  .panel-app__debug {
+    padding-inline: 16px;
   }
 }
 
@@ -2429,7 +2571,9 @@
     touch-action: none;
   }
 
+  /* Each card keeps its full height and the body scrolls, instead of squeezing three into the screen. */
   .club-panel__cards {
+    flex: 0 0 auto;
     grid-template-columns: minmax(0, 1fr);
   }
 }
