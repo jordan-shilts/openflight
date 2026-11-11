@@ -272,11 +272,7 @@ function FlightChart({
 }
 
 /** How far the flight lands from the target line, e.g. "12 yds right". */
-function offlineLabel(
-  trajectory: ShotTrajectory,
-  unitSystem: UnitSystem,
-  t: ReturnType<typeof useI18n>['t']
-): string {
+function offlineLabel(trajectory: ShotTrajectory, unitSystem: UnitSystem, t: ReturnType<typeof useI18n>['t']): string {
   const lateralYd = trajectory.points[trajectory.points.length - 1][2];
   const distance = formatDistance(Math.abs(lateralYd), unitSystem, 0);
   if (Number(distance) === 0) {

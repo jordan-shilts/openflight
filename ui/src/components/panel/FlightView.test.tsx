@@ -287,7 +287,9 @@ describe('FlightView', () => {
     });
 
     it('is a short strip sized in rem that the side view gives way to', () => {
-      expect(css).toMatch(/\.flight-view__top \{[^}]*flex: 0 0 auto;[^}]*height: clamp\([\d.]+rem, [\d.]+vh, [\d.]+rem\)/);
+      expect(css).toMatch(
+        /\.flight-view__top \{[^}]*flex: 0 0 auto;[^}]*height: clamp\([\d.]+rem, [\d.]+vh, [\d.]+rem\)/
+      );
       expect(css).toMatch(/\.flight-chart__target \{[^}]*stroke-dasharray/);
     });
   });
