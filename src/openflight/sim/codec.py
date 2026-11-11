@@ -80,6 +80,14 @@ class SimConnector:
         """Serialize and send a resolved shot. Raises OSError if the socket fails."""
         self._client.send_raw(self.codec.build_shot(resolved))
 
+    def deliver_shot(self, resolved: ResolvedShot, on_delivered=None) -> bool:
+        """Send a shot, or hold it through a dropped link or network switch.
+
+        Never raises. True when it went out now; False when it is waiting for
+        the connection (it is sent, and ``on_delivered`` called, once it does).
+        """
+        return self._client.deliver(self.codec.build_shot(resolved), on_delivered=on_delivered)
+
 
 def _codec_for(cfg: "ConnectorConfig") -> Codec:
     """Instantiate the codec for a connector type. Import is local to avoid an

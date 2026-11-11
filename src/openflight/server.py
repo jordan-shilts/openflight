@@ -19,7 +19,7 @@ from dataclasses import asdict, dataclass, fields, replace
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from flask import Flask, Response, jsonify, request, send_file, send_from_directory
 from flask_cors import CORS
@@ -2868,13 +2868,14 @@ def on_shot_processing(state: str) -> None:
 
 
 def _forward_shot_to_simulators(shot: Shot) -> None:
-    """Resolve a shot once and fan it out to every connected simulator.
+    """Resolve a shot once and fan it out to every simulator.
 
     The shot pipeline is untouched: this is called after the UI emit and never
-    raises into it. A shot number is only allocated when at least one connector
-    is connected, so the sequence doesn't drift while sims are offline.
+    raises into it. A connector that is momentarily down (a dropped link, or the
+    network switching between home Wi-Fi and the Pi's hotspot) holds the shot
+    and sends it as soon as it reconnects, so a swing isn't lost to the switch.
     """
-    if not any(c.is_connected() for c in sim_connectors):
+    if not sim_connectors:
         return
     try:
         resolved = resolve_shot(shot, sim_player_state)
@@ -2884,53 +2885,65 @@ def _forward_shot_to_simulators(shot: Shot) -> None:
         return
 
     values = resolved.as_values()
+
+    def _delivered_to(connector) -> Callable[[], None]:
+        def _on_delivered() -> None:
+            sl = get_session_logger()
+            if sl:
+                sl.log_sim_send(
+                    target=connector.name,
+                    shot_number=resolved.shot_number,
+                    provenance=resolved.provenance,
+                    values=values,
+                )
+            socketio.emit(
+                "sim_shot",
+                {
+                    "target": connector.name,
+                    "shot_number": resolved.shot_number,
+                    "fields": connector.codec.fields_for_target(),
+                    "values": values,
+                    "provenance": resolved.provenance,
+                },
+            )
+            if debug_mode:
+                measured = sum(1 for p in resolved.provenance.values() if p == "measured")
+                estimated = len(resolved.provenance) - measured
+                logger.info(
+                    "[sim] → %s shot #%d: ball=%.1f vla=%.1f hla=%.1f spin=%.0f axis=%.1f "
+                    "carry=%.1f (%dM/%dE)",
+                    connector.name,
+                    resolved.shot_number,
+                    resolved.ball_speed_mph,
+                    resolved.vla,
+                    resolved.hla,
+                    resolved.total_spin_rpm,
+                    resolved.spin_axis_deg,
+                    resolved.carry_yards,
+                    measured,
+                    estimated,
+                )
+
+        return _on_delivered
+
     for connector in sim_connectors:
-        if not connector.is_connected():
-            continue
+        # Sends are synchronous on this thread, in connector order. Local sims
+        # ack in microseconds; a held shot goes out later on the connector's
+        # own thread.
         try:
-            # Sends are synchronous on this thread, in connector order. Local sims
-            # (the only target today) ack in microseconds; if a remote or laggy sim
-            # is ever added, move this behind a per-connector send queue so one slow
-            # sim can't stall delivery to the others (PR #115 review #2).
-            connector.send_shot(resolved)
-        except OSError as e:
+            sent_now = connector.deliver_shot(resolved, on_delivered=_delivered_to(connector))
+        except Exception as e:  # pylint: disable=broad-except
+            # deliver_shot never raises by contract; a broken connector still
+            # must not take the shot pipeline or the other connectors down.
             logger.warning("[sim] %s send failed: %s", connector.name, e)
             socketio.emit("sim_send_failed", {"target": connector.name, "reason": str(e)})
             continue
-        sl = get_session_logger()
-        if sl:
-            sl.log_sim_send(
-                target=connector.name,
-                shot_number=resolved.shot_number,
-                provenance=resolved.provenance,
-                values=values,
-            )
-        socketio.emit(
-            "sim_shot",
-            {
-                "target": connector.name,
-                "shot_number": resolved.shot_number,
-                "fields": connector.codec.fields_for_target(),
-                "values": values,
-                "provenance": resolved.provenance,
-            },
-        )
-        if debug_mode:
-            measured = sum(1 for p in resolved.provenance.values() if p == "measured")
-            estimated = len(resolved.provenance) - measured
-            logger.info(
-                "[sim] → %s shot #%d: ball=%.1f vla=%.1f hla=%.1f spin=%.0f axis=%.1f "
-                "carry=%.1f (%dM/%dE)",
-                connector.name,
-                resolved.shot_number,
-                resolved.ball_speed_mph,
-                resolved.vla,
-                resolved.hla,
-                resolved.total_spin_rpm,
-                resolved.spin_axis_deg,
-                resolved.carry_yards,
-                measured,
-                estimated,
+        if not sent_now:
+            logger.info("[sim] %s not connected; holding shot #%d for its reconnect",
+                        connector.name, resolved.shot_number)
+            socketio.emit(
+                "sim_shot_waiting",
+                {"target": connector.name, "shot_number": resolved.shot_number},
             )
 
 

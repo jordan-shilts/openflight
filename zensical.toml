@@ -52,6 +52,7 @@ nav = [
     "setup/raspberry-pi.md",
     "setup/rolling-buffer.md",
     "setup/auto-start.md",
+    "setup/no-wifi.md",
     "setup/splash-screen.md",
     "electron-kiosk-shell.md",
     "setup/diagnostic.md",

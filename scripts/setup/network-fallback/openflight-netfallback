@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+#
+# Keep OpenFlight reachable with or without home Wi-Fi.
+#
+# Home Wi-Fi in range: the Pi uses it, nothing changes.
+# No home Wi-Fi: the Pi starts its own hotspot (NetworkManager profile
+# "openflight-hotspot", Pi at 10.42.0.1) so the sim's computer and a phone can
+# join it directly. Shots still go to the sim by name (e.g. mac.local), so
+# nothing else needs changing.
+#
+# Modes:
+#   --boot   once at boot: wait for home Wi-Fi, else start the hotspot
+#   --check  every few seconds (systemd timer):
+#              * home Wi-Fi dropped and stayed down → start the hotspot
+#              * hotspot up with nobody on it for a while → look for home
+#                Wi-Fi again, and come back to the hotspot if it isn't there
+#            A hotspot with anyone on it is never touched.
+#   --status print what it sees, change nothing
+#
+# Settings (environment, mostly for tests):
+#   OPENFLIGHT_HOTSPOT_CON   NetworkManager profile name   (openflight-hotspot)
+#   OPENFLIGHT_WIFI_IFACE    Wi-Fi interface                (wlan0)
+#   OPENFLIGHT_NETFALLBACK_STATE  state dir                 (/run/openflight-netfallback)
+#   OPENFLIGHT_BOOT_WAIT_S   home Wi-Fi wait at boot        (30)
+#   OPENFLIGHT_LOST_GRACE_S  home Wi-Fi outage before hotspot (45)
+#   OPENFLIGHT_IDLE_RETRY_S  empty hotspot before a home Wi-Fi look (180)
+#   OPENFLIGHT_SEARCH_S      how long that look lasts       (20)
+
+set -u
+
+HOTSPOT="${OPENFLIGHT_HOTSPOT_CON:-openflight-hotspot}"
+IFACE="${OPENFLIGHT_WIFI_IFACE:-wlan0}"
+STATE_DIR="${OPENFLIGHT_NETFALLBACK_STATE:-/run/openflight-netfallback}"
+BOOT_WAIT_S="${OPENFLIGHT_BOOT_WAIT_S:-30}"
+LOST_GRACE_S="${OPENFLIGHT_LOST_GRACE_S:-45}"
+IDLE_RETRY_S="${OPENFLIGHT_IDLE_RETRY_S:-180}"
+SEARCH_S="${OPENFLIGHT_SEARCH_S:-20}"
+
+log() { echo "openflight-netfallback: $*"; }
+
+now() { date +%s; }
+
+# Name of the profile active on the Wi-Fi interface, or empty.
+active_con() {
+    nmcli -t -f GENERAL.CONNECTION device show "$IFACE" 2>/dev/null \
+        | sed -n 's/^GENERAL.CONNECTION://p' | head -n 1
+}
+
+# Numeric NetworkManager device state (100 = connected).
+dev_state() {
+    nmcli -t -f GENERAL.STATE device show "$IFACE" 2>/dev/null \
+        | sed -n 's/^GENERAL.STATE:\([0-9]*\).*/\1/p' | head -n 1
+}
+
+on_home_wifi() {
+    local con
+    con="$(active_con)"
+    [ -n "$con" ] && [ "$con" != "--" ] && [ "$con" != "$HOTSPOT" ] && [ "$(dev_state)" = "100" ]
+}
+
+on_hotspot() {
+    [ "$(active_con)" = "$HOTSPOT" ]
+}
+
+# Devices on the hotspot. iw knows exactly; without it, devices the Pi has
+# heard from recently (neighbour table) are a close stand-in.
+stations() {
+    if command -v iw >/dev/null 2>&1; then
+        iw dev "$IFACE" station dump 2>/dev/null | grep -c '^Station' || true
+    else
+        ip neigh show dev "$IFACE" 2>/dev/null | grep -cvE 'FAILED|INCOMPLETE|^$' || true
+    fi
+}
+
+hotspot_up() {
+    log "no home Wi-Fi; starting the hotspot ($HOTSPOT)"
+    if nmcli connection up "$HOTSPOT" >/dev/null 2>&1; then
+        return 0
+    fi
+    # 5 GHz can be refused (regulatory domain, channel). 2.4 GHz always works.
+    if [ "$(nmcli -g 802-11-wireless.band connection show "$HOTSPOT" 2>/dev/null)" = "a" ]; then
+        log "5 GHz hotspot refused; switching it to 2.4 GHz"
+        nmcli connection modify "$HOTSPOT" 802-11-wireless.band bg 802-11-wireless.channel 6 \
+            >/dev/null 2>&1 || true
+        nmcli connection up "$HOTSPOT" >/dev/null 2>&1 && return 0
+    fi
+    log "could not start $HOTSPOT"
+    return 1
+}
+
+hotspot_down() {
+    nmcli connection down "$HOTSPOT" >/dev/null 2>&1 || true
+}
+
+since_file() { echo "$STATE_DIR/$1-since"; }
+
+# Seconds since the named condition was first seen (records it now if new).
+held_for() {
+    local f t
+    f="$(since_file "$1")"
+    if [ ! -f "$f" ]; then
+        now >"$f"
+        echo 0
+        return
+    fi
+    t="$(cat "$f" 2>/dev/null || echo "")"
+    case "$t" in '' | *[!0-9]*) now >"$f"; echo 0; return ;; esac
+    echo $(($(now) - t))
+}
+
+clear_since() { rm -f "$(since_file "$1")"; }
+
+wait_for_home_wifi() {
+    local waited=0
+    while [ "$waited" -lt "$1" ]; do
+        if on_home_wifi; then
+            return 0
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+    on_home_wifi
+}
+
+do_boot() {
+    if wait_for_home_wifi "$BOOT_WAIT_S"; then
+        log "on home Wi-Fi ($(active_con))"
+        return 0
+    fi
+    on_hotspot && return 0
+    hotspot_up
+}
+
+do_check() {
+    if on_home_wifi; then
+        clear_since lost
+        clear_since idle
+        return 0
+    fi
+    if on_hotspot; then
+        clear_since lost
+        if [ "$(stations)" -gt 0 ]; then
+            clear_since idle
+            return 0
+        fi
+        if [ "$(held_for idle)" -lt "$IDLE_RETRY_S" ]; then
+            return 0
+        fi
+        log "hotspot empty for ${IDLE_RETRY_S}s; looking for home Wi-Fi"
+        hotspot_down
+        nmcli device wifi rescan ifname "$IFACE" >/dev/null 2>&1 || true
+        if wait_for_home_wifi "$SEARCH_S"; then
+            log "back on home Wi-Fi ($(active_con))"
+            clear_since idle
+            return 0
+        fi
+        hotspot_up
+        clear_since idle
+        held_for idle >/dev/null # start the next idle period now
+        return 0
+    fi
+    # Neither: home Wi-Fi went away (or is still connecting).
+    if [ "$(held_for lost)" -ge "$LOST_GRACE_S" ]; then
+        clear_since lost
+        hotspot_up
+    fi
+}
+
+do_status() {
+    echo "interface:  $IFACE"
+    echo "connection: $(active_con)"
+    echo "state:      $(dev_state)"
+    if on_hotspot; then
+        echo "mode:       hotspot ($(stations) connected)"
+    elif on_home_wifi; then
+        echo "mode:       home Wi-Fi"
+    else
+        echo "mode:       not connected"
+    fi
+}
+
+mkdir -p "$STATE_DIR"
+
+case "${1:-}" in
+    --boot) do_boot ;;
+    --check) do_check ;;
+    --status) do_status ;;
+    *)
+        echo "usage: $0 --boot | --check | --status" >&2
+        exit 2
+        ;;
+esac

@@ -10,18 +10,78 @@ import os
 import socket
 import threading
 import time
+from dataclasses import dataclass
 from typing import Callable, List, Optional, Protocol, Tuple
 
 from openflight.sim.types import (
     ConnectionState,
     InboundEvent,
     PeerInfo,
+    ShotAck,
     StatusEvent,
 )
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_BACKOFF: Tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 16.0, 30.0)
+# Sims live on the local network, where a connect attempt is cheap and a long
+# backoff only means a sim that came back (or a network that switched, e.g. home
+# Wi-Fi to the Pi's own hotspot) waits up to half a minute for its shots.
+DEFAULT_BACKOFF: Tuple[float, ...] = (0.5, 1.0, 2.0, 3.0)
+
+# A shot that can't go out right away (no connection yet, or the link died under
+# it) waits this long for a connection before it is given up. Long enough to
+# ride out a network switch, short enough that a stale shot never lands later
+# on a different hole.
+PENDING_SHOT_TTL_S = 20.0
+
+# A sim that acknowledges shots (Open-Birdie names itself; GSPro-style sims
+# reply "Shot received successfully") is expected to do so within this time.
+# Silence means the link is dead even if TCP hasn't noticed: reconnect and send
+# the shot again. Local sims ack in milliseconds.
+SHOT_REPLY_TIMEOUT_S = 2.0
+
+# Dead-link detection while idle (Linux): a peer that vanished without closing
+# (it left the network) is noticed in a few seconds instead of TCP's ~15 min.
+_KEEPALIVE_IDLE_S = 2
+_KEEPALIVE_INTERVAL_S = 1
+_KEEPALIVE_COUNT = 3
+_USER_TIMEOUT_MS = 4000
+
+
+@dataclass
+class _Outgoing:
+    """A shot on its way: the bytes, when to give up, and who to tell once it's out."""
+
+    data: bytes
+    deadline: float
+    on_delivered: Optional[Callable[[], None]] = None
+    delivered: bool = False
+    sent_at: float = 0.0
+    attempts: int = 0
+
+
+def _tune_socket(sock: socket.socket) -> None:
+    """Low latency, and notice a dead peer in seconds (where the OS allows it)."""
+    options = [
+        (socket.IPPROTO_TCP, socket.TCP_NODELAY, 1),
+        (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
+    ]
+    for name, value in (
+        ("TCP_KEEPIDLE", _KEEPALIVE_IDLE_S),
+        ("TCP_KEEPALIVE", _KEEPALIVE_IDLE_S),  # macOS spelling of KEEPIDLE
+        ("TCP_KEEPINTVL", _KEEPALIVE_INTERVAL_S),
+        ("TCP_KEEPCNT", _KEEPALIVE_COUNT),
+        ("TCP_USER_TIMEOUT", _USER_TIMEOUT_MS),
+    ):
+        opt = getattr(socket, name, None)
+        if opt is not None:
+            options.append((socket.IPPROTO_TCP, opt, value))
+    for level, opt, value in options:
+        try:
+            sock.setsockopt(level, opt, value)
+        except OSError:
+            pass
+
 
 # Diagnostic: set OPENFLIGHT_SIM_LOG_RAW=1 to log every inbound frame verbatim
 # (useful for capturing a simulator's exact wire format).
@@ -123,6 +183,12 @@ class TcpSimClient:
         self._hb_thread: Optional[threading.Thread] = None
         self._last_send_time = 0.0
         self._send_time_lock = threading.Lock()
+        # Shot delivery across drops and network switches.
+        self._shot_lock = threading.Lock()
+        self._pending: Optional[_Outgoing] = None  # waiting for a connection
+        self._awaiting: Optional[_Outgoing] = None  # sent, waiting for the sim's ack
+        self._peer_acks_shots = False  # learned: this sim replies to every shot
+        self._wake = threading.Event()  # cuts a reconnect backoff short
 
     # --- public state ---------------------------------------------------------
 
@@ -162,6 +228,7 @@ class TcpSimClient:
 
     def stop(self) -> None:
         self._stop_event.set()
+        self._wake.set()
         self._close_socket()
         for t in (self._conn_thread, self._hb_thread):
             if t is not None:
@@ -183,7 +250,124 @@ class TcpSimClient:
         with self._send_time_lock:
             self._last_send_time = time.time()
 
+    def deliver(self, data: bytes, on_delivered: Optional[Callable[[], None]] = None) -> bool:
+        """Send a shot now, or hold it until the connection is back. Never raises.
+
+        Returns True when it went out on this call. Otherwise it waits up to
+        PENDING_SHOT_TTL_S for a (re)connection, which is tried at once rather
+        than after the backoff. Only the newest held shot is kept. If the sim
+        acknowledges shots, one that gets no ack is sent again on a fresh
+        connection. ``on_delivered`` runs once, when the shot first goes out.
+        """
+        item = _Outgoing(
+            data=data, deadline=time.monotonic() + PENDING_SHOT_TTL_S, on_delivered=on_delivered
+        )
+        if self.is_connected():
+            try:
+                self._send_shot(item)
+                return True
+            except OSError as e:
+                logger.info("[%s] shot send failed, holding it for a reconnect: %s", self._name, e)
+                self._close_socket()
+        self._hold(item)
+        return False
+
+    @property
+    def has_pending_shot(self) -> bool:
+        with self._shot_lock:
+            return self._pending is not None or self._awaiting is not None
+
     # --- internals ------------------------------------------------------------
+
+    def _expects_shot_ack(self) -> bool:
+        # Open-Birdie names itself and acks every message; other sims earn it by
+        # acking a shot once.
+        return self._peer_acks_shots or bool(self._peer)
+
+    def _hold(self, item: _Outgoing) -> None:
+        with self._shot_lock:
+            if self._pending is not None and self._pending is not item:
+                logger.warning("[%s] a newer shot replaces one still waiting to send", self._name)
+            self._pending = item
+        self._wake.set()
+
+    def _send_shot(self, item: _Outgoing) -> None:
+        item.attempts += 1
+        # Wait for the ack before the bytes leave: a local sim can answer
+        # before send_raw even returns.
+        item.sent_at = time.monotonic()
+        with self._shot_lock:
+            self._awaiting = item
+        try:
+            self.send_raw(item.data)
+        except OSError:
+            with self._shot_lock:
+                if self._awaiting is item:
+                    self._awaiting = None
+            raise
+        if not item.delivered:
+            item.delivered = True
+            if item.on_delivered is not None:
+                try:
+                    item.on_delivered()
+                except Exception:  # pylint: disable=broad-except
+                    logger.exception("[%s] on_delivered raised", self._name)
+
+    def _flush_pending(self) -> None:
+        with self._shot_lock:
+            item, self._pending = self._pending, None
+        if item is None:
+            return
+        if time.monotonic() > item.deadline:
+            logger.warning(
+                "[%s] dropping a shot that waited %.0f s for the sim",
+                self._name,
+                PENDING_SHOT_TTL_S,
+            )
+            return
+        try:
+            self._send_shot(item)
+            logger.info("[%s] sent a held shot (attempt %d)", self._name, item.attempts)
+        except OSError as e:
+            logger.info("[%s] held shot send failed: %s", self._name, e)
+            with self._shot_lock:
+                if self._pending is None:
+                    self._pending = item
+            self._close_socket()
+
+    def _requeue_unacked(self) -> None:
+        """After a connection ends, put a shot the sim never acked back in line."""
+        with self._shot_lock:
+            item, self._awaiting = self._awaiting, None
+            if item is None or not self._expects_shot_ack():
+                return
+            if time.monotonic() > item.deadline:
+                return
+            if self._pending is None:
+                self._pending = item
+        logger.info("[%s] no ack for the last shot; it will be sent again", self._name)
+
+    def _note_shot_ack(self, event) -> None:
+        if not isinstance(event, ShotAck):
+            return
+        if "shot" not in (event.message or "").lower():
+            return  # e.g. "Heartbeat OK"
+        with self._shot_lock:
+            if self._awaiting is not None:
+                self._awaiting = None
+                self._peer_acks_shots = True
+
+    def _ack_overdue(self) -> bool:
+        with self._shot_lock:
+            item = self._awaiting
+            if item is None:
+                return False
+            if time.monotonic() - item.sent_at < SHOT_REPLY_TIMEOUT_S:
+                return False
+            if not self._expects_shot_ack():
+                self._awaiting = None  # a sim that never acks: nothing to wait for
+                return False
+            return True
 
     def _send_heartbeat(self) -> None:
         # Separate path that does NOT update _last_send_time, otherwise
@@ -196,8 +380,14 @@ class TcpSimClient:
                 return
             try:
                 self._sock.sendall(beat)
+                failed = None
             except OSError as e:
-                logger.info("[%s] heartbeat send failed: %s", self._name, e)
+                failed = e
+        if failed is not None:
+            # The link is gone: drop it now so the reconnect starts, instead of
+            # finding out when the next shot vanishes into it.
+            logger.info("[%s] heartbeat send failed, reconnecting: %s", self._name, failed)
+            self._close_socket()
 
     def _heartbeat_loop(self) -> None:
         interval = max(self._hb_interval, 0.05)
@@ -247,7 +437,10 @@ class TcpSimClient:
     def _try_connect(self) -> bool:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(5.0)
+        _tune_socket(s)
         try:
+            # The host is looked up on every attempt, so a name like
+            # "mac.local" follows the sim from home Wi-Fi to the Pi's hotspot.
             s.connect((self._host, self._port))
         except OSError as e:
             try:
@@ -282,8 +475,10 @@ class TcpSimClient:
                 ever_connected = True
                 self._peer = ""  # whoever answers this connection names itself afresh
                 self._set_state(ConnectionState.CONNECTED)
+                self._flush_pending()
                 reconnect_reason = self._recv_loop()
                 self._close_socket()
+                self._requeue_unacked()
                 if self._stop_event.is_set():
                     break
                 # Connection dropped — fall through to reconnect
@@ -293,9 +488,7 @@ class TcpSimClient:
             # connection that was once established and then lost, so we never
             # imply a connection that never happened.
             backoff_state = (
-                ConnectionState.RECONNECT_BACKOFF
-                if ever_connected
-                else ConnectionState.CONNECTING
+                ConnectionState.RECONNECT_BACKOFF if ever_connected else ConnectionState.CONNECTING
             )
             self._set_state(
                 backoff_state,
@@ -304,7 +497,13 @@ class TcpSimClient:
                 message=reconnect_reason,
             )
             attempt += 1
-            self._stop_event.wait(timeout=wait)
+            with self._shot_lock:
+                shot_waiting = self._pending is not None
+            if shot_waiting and attempt > 1:
+                # A shot is waiting: keep trying at the shortest interval.
+                wait = self._backoff[0]
+            self._wake.wait(timeout=wait)
+            self._wake.clear()
 
     def _dispatch(self, event: InboundEvent) -> None:
         if self.on_inbound is None:
@@ -325,6 +524,8 @@ class TcpSimClient:
             try:
                 data = sock.recv(4096)
             except socket.timeout:
+                if self._ack_overdue():
+                    return f"no ack for a shot within {SHOT_REPLY_TIMEOUT_S:g} s"
                 continue
             except OSError as error:
                 return f"receive failed: {type(error).__name__}: {error}"
@@ -352,6 +553,7 @@ class TcpSimClient:
                             self._peer = event.name
                             self._set_state(self.state, peer=event.name)
                         continue
+                    self._note_shot_ack(event)
                     self._dispatch(event)
             # Drained all complete frames; if the incomplete remainder has grown
             # past the cap, the peer never closed a frame — drop it and resync.

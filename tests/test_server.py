@@ -5607,8 +5607,9 @@ class TestFlightTrajectoryPayload:
             def is_connected(self):
                 return True
 
-            def send_shot(self, resolved):
+            def deliver_shot(self, resolved, on_delivered=None):
                 self.sent.append(resolved)
+                return True
 
         connector = _Connector()
         monkeypatch.setattr(server_module, "sim_connectors", [connector])
