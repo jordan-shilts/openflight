@@ -51,6 +51,7 @@ from .clubs.physics import (
     get_club_physics,
     get_club_simulation_profile,
 )
+from .d_plane import estimate_club_delivery
 from .launch_monitor import SPIN_CONFIDENCE_HIGH, SPIN_CONFIDENCE_RELIABLE, Shot, summarize_shots
 from .measuring_status import MeasuringStatus, parse_report as parse_measuring_report
 from .ops243 import (
@@ -987,6 +988,10 @@ ball_speed_correction_enabled = False
 ball_speed_correction_distance_ft = 5.5
 ball_speed_correction_ball_above_radar_ft = -4.0 / 12.0
 calculated_spin_enabled = False
+# Derive a spin axis for drivers, woods and hybrids too. Off by default: an
+# off-centre strike on those clubs tilts the axis as much as the D-plane does
+# (gear effect), and nothing measures strike location. See openflight.d_plane.
+wood_spin_axis_enabled = False
 
 
 def shot_to_dict(shot: Shot) -> dict:
@@ -3014,6 +3019,44 @@ def _sim_on_inbound(target: str, event) -> None:
             logger.info("[sim] ← %s ack: shot %s ok", target, event.shot_number)
 
 
+def _apply_club_delivery(shot: Shot) -> None:
+    """Fill face angle, lofts and spin axis from the D-plane (openflight.d_plane).
+
+    Runs once launch angles and club delivery are final, so a camera-fused
+    club path counts, and before carry so the trajectory curves with the axis.
+    Mock shots keep the direction their generator chose.
+    """
+    if shot.mode == "mock":
+        return
+    delivery = estimate_club_delivery(shot, include_gear_effect_clubs=wood_spin_axis_enabled)
+    shot.face_angle_deg = _round_or_none(delivery.face_angle_deg)
+    shot.face_to_path_deg = _round_or_none(delivery.face_to_path_deg)
+    shot.dynamic_loft_deg = _round_or_none(delivery.dynamic_loft_deg)
+    shot.spin_loft_deg = _round_or_none(delivery.spin_loft_deg)
+    shot.spin_axis_deg = _round_or_none(delivery.spin_axis_deg)
+    shot.delivery_club_path_source = delivery.club_path_source
+    shot.delivery_attack_angle_source = delivery.attack_angle_source
+    if shot.spin_axis_deg is not None:
+        logger.info(
+            "[SERVER] Spin axis: %+.1f° (face %+.1f°, path %+.1f° from %s, attack from %s)",
+            shot.spin_axis_deg,
+            delivery.face_angle_deg,
+            delivery.face_angle_deg - delivery.face_to_path_deg,
+            delivery.club_path_source,
+            delivery.attack_angle_source,
+        )
+    elif delivery.face_angle_deg is not None:
+        logger.info(
+            "[SERVER] Spin axis withheld: %s (face %+.1f°)",
+            delivery.spin_axis_withheld,
+            delivery.face_angle_deg,
+        )
+
+
+def _round_or_none(value: float | None) -> float | None:
+    return None if value is None else round(value, 1)
+
+
 def _apply_calculated_spin(shot: Shot) -> bool:
     """Replace radar-measured spin with the kinematic estimate.
 
@@ -3053,13 +3096,6 @@ ANGLE_CONFIDENCE_FLOOR = 0.55
 ANGLE_CONFIDENCE_CEILING = 0.95
 VERTICAL_SPREAD_FULL_CONFIDENCE_DEG = 2.0
 VERTICAL_SPREAD_ZERO_CONFIDENCE_DEG = 10.0
-
-# Spin axis is a difference of two experimental estimates (horizontal launch
-# minus club path); it should not appear the moment club path becomes
-# non-null, only once the weaker of the two legs (horizontal launch) clears
-# this bar.
-SPIN_AXIS_MIN_CONFIDENCE = 0.6
-
 
 def vertical_confidence(measurement) -> float:
     """Vertical launch confidence from channel agreement and corroboration.
@@ -3863,36 +3899,13 @@ def _enrich_shot_from_optional_hardware(shot: Shot) -> _ShotEnrichmentResult:
 
                 kld7_horizontal.reset()
 
-            # Derive spin axis from face angle (H. launch) minus club path.
-            # Both are experimental estimates; only trust the difference once
-            # the weaker leg (horizontal launch) clears a confidence floor,
-            # rather than emitting it the moment club path is non-null.
-            # club_path_deg can come from IWR6843 (_process_iwr6843_angle,
-            # above) rather than K-LD7, so a failure here is not necessarily
-            # a K-LD7 failure -- see the except block below.
-            if (
-                shot.launch_angle_horizontal is not None
-                and shot.club_path_deg is not None
-                and (shot.launch_angle_horizontal_confidence or 0.0) >= SPIN_AXIS_MIN_CONFIDENCE
-            ):
-                shot.spin_axis_deg = round(shot.launch_angle_horizontal - shot.club_path_deg, 1)
-                logger.info(
-                    "[SERVER] Spin axis: %+.1f° (face=%+.1f° - path=%+.1f°)",
-                    shot.spin_axis_deg,
-                    shot.launch_angle_horizontal,
-                    shot.club_path_deg,
-                )
-
             if kld7_vertical or kld7_horizontal:
                 kld7_ms = (time.time() - kld7_start) * 1000
                 logger.info("[SERVER] K-LD7 processing: %.1fms", kld7_ms)
     except Exception as e:
-        # Covers K-LD7 processing AND the spin-axis derivation above, which
-        # reads club_path_deg regardless of whether it came from K-LD7 or
-        # IWR6843 -- so this is not necessarily a K-LD7-specific failure.
-        logger.warning("[SERVER] Angle/spin-axis post-processing error: %s", e, exc_info=True)
+        logger.warning("[SERVER] Angle post-processing error: %s", e, exc_info=True)
         log_session_error(
-            "Angle/spin-axis post-processing failed",
+            "Angle post-processing failed",
             component="server",
             context={
                 "stage": "angle_postprocessing",
@@ -3988,6 +4001,7 @@ def _finalize_shot_detected(
     # Always emit user-facing launch angles. Radar/camera measurements win;
     # rejected or missing axes fall back to conservative estimates.
     _ensure_user_facing_launch_angles(shot)
+    _apply_club_delivery(shot)
 
     # Ball-speed cosine correction: the OPS reads the radial component of
     # a ball departing at the launch angle. Applied AFTER the K-LD7 (which
@@ -5741,6 +5755,18 @@ def main():
         ),
     )
     parser.add_argument(
+        "--wood-spin-axis",
+        action="store_true",
+        help=(
+            "Also derive a spin axis (draw/fade curve) for drivers, woods and "
+            "hybrids. Off by default: an off-centre strike on those clubs tilts "
+            "the axis as much as face-to-path does, and strike location is not "
+            "measured, so the curve can be far out or reversed. Irons and wedges "
+            "always get one when launch direction and club path are trusted "
+            "(see src/openflight/d_plane.py)"
+        ),
+    )
+    parser.add_argument(
         "--kld7-mount-tilt",
         type=float,
         default=os.getenv("KLD7_MOUNT_TILT"),
@@ -5887,6 +5913,8 @@ def main():
     _VERTICAL_RADAR_GATE_BYPASS = args.kld7_vertical_raw
     global calculated_spin_enabled
     calculated_spin_enabled = args.calculated_spin
+    global wood_spin_axis_enabled
+    wood_spin_axis_enabled = args.wood_spin_axis
     ballistics_enabled = args.ballistics
     battery_provider = args.battery
     profile_store = ProfileStore(args.profiles_path)

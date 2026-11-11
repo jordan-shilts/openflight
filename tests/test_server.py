@@ -14,6 +14,7 @@ import pytest
 from openflight import server as server_module
 from openflight.camera.replay import ReplayNotFoundError, ReplayPreparationError
 from openflight.clubs import ClubType
+from openflight.d_plane import SPIN_AXIS_MIN_HORIZONTAL_CONFIDENCE
 from openflight.iwr6843 import Calibration
 from openflight.kld7.types import KLD7Angle
 from openflight.launch_monitor import Shot
@@ -1099,7 +1100,7 @@ class TestSessionErrorLogging:
         _wait_for_shot_finalization_idle()
 
         assert logged_errors
-        assert logged_errors[0][0] == "Angle/spin-axis post-processing failed"
+        assert logged_errors[0][0] == "Angle post-processing failed"
         assert logged_errors[0][1]["component"] == "server"
         assert logged_errors[0][1]["context"]["stage"] == "angle_postprocessing"
         assert logged_errors[0][1]["exc"].__class__.__name__ == "RuntimeError"
@@ -4443,19 +4444,26 @@ class TestOnShotDetected:
         assert shot.launch_angle_vertical == pytest.approx(18.7)
         assert shot.launch_angle_horizontal == pytest.approx(0.0)
 
-    def _spin_axis_shot(self, *, horizontal_confidence):
-        """A shot with launch angle and club path already resolved, isolating
-        the spin-axis gate itself rather than whatever radar path fed it."""
-        return Shot(
-            ball_speed_mph=150.0,
-            club_speed_mph=100.0,
+    def _spin_axis_shot(self, *, horizontal_confidence=0.9, **overrides):
+        """A 7-iron with measured launch and a club path already resolved,
+        isolating the spin-axis stage rather than whatever sensor fed it."""
+        fields = dict(
+            ball_speed_mph=120.0,
+            club_speed_mph=85.0,
             timestamp=datetime.now(),
             impact_timestamp=1234.5,
-            club=ClubType.DRIVER,
-            launch_angle_horizontal=3.2,
+            club=ClubType.IRON_7,
+            launch_angle_vertical=16.0,
+            launch_angle_vertical_confidence=0.9,
+            launch_angle_vertical_source="radar",
+            launch_angle_horizontal=1.0,
             launch_angle_horizontal_confidence=horizontal_confidence,
-            club_path_deg=-1.5,
+            launch_angle_horizontal_source="radar",
+            angle_source="radar",
+            club_path_deg=-3.0,
         )
+        fields.update(overrides)
+        return Shot(**fields)
 
     def _run_with_no_radar_hardware(self, monkeypatch, shot):
         monkeypatch.setattr(server_module, "iwr6843_runtime", None)
@@ -4469,22 +4477,124 @@ class TestOnShotDetected:
         self._wait_for_finalization_coordinator_idle()
 
     def test_spin_axis_emitted_when_horizontal_confidence_clears_gate(self, monkeypatch):
-        shot = self._spin_axis_shot(horizontal_confidence=server_module.SPIN_AXIS_MIN_CONFIDENCE)
+        shot = self._spin_axis_shot(horizontal_confidence=SPIN_AXIS_MIN_HORIZONTAL_CONFIDENCE)
 
         self._run_with_no_radar_hardware(monkeypatch, shot)
 
-        assert shot.spin_axis_deg == pytest.approx(3.2 - (-1.5))
+        # Face open to path by 5.2 deg on a 7-iron: a fade, 10.8 deg of tilt
+        # (the earlier launch-minus-path rule would have said 4.0).
+        assert shot.spin_axis_deg == pytest.approx(10.8)
+        assert shot.face_angle_deg == pytest.approx(2.2)
+        assert shot.face_to_path_deg == pytest.approx(5.2)
+        assert shot.delivery_club_path_source == "measured"
+        assert shot.delivery_attack_angle_source == "typical"
 
     def test_spin_axis_withheld_when_horizontal_confidence_below_gate(self, monkeypatch):
         """Regression guard: spin axis must not appear the moment club path
         is non-null -- only once the horizontal leg is trustworthy enough."""
         shot = self._spin_axis_shot(
-            horizontal_confidence=server_module.SPIN_AXIS_MIN_CONFIDENCE - 0.01
+            horizontal_confidence=SPIN_AXIS_MIN_HORIZONTAL_CONFIDENCE - 0.01
         )
 
         self._run_with_no_radar_hardware(monkeypatch, shot)
 
         assert shot.spin_axis_deg is None
+        assert shot.face_angle_deg == pytest.approx(2.2)
+
+    def test_spin_axis_curves_the_trajectory(self, monkeypatch):
+        shot = self._spin_axis_shot()
+
+        self._run_with_no_radar_hardware(monkeypatch, shot)
+
+        lateral_yards = [point[2] for point in shot.trajectory["points"]]
+        assert lateral_yards[-1] > lateral_yards[len(lateral_yards) // 2] > 0
+
+    def test_measured_attack_angle_fills_dynamic_and_spin_loft(self, monkeypatch):
+        shot = self._spin_axis_shot(club_angle_deg=-5.0)
+
+        self._run_with_no_radar_hardware(monkeypatch, shot)
+
+        assert shot.dynamic_loft_deg == pytest.approx(22.3)
+        assert shot.spin_loft_deg == pytest.approx(27.3)
+        assert shot.spin_axis_deg == pytest.approx(10.3)
+        assert shot.delivery_attack_angle_source == "measured"
+
+    @staticmethod
+    def _camera_fusion_reporting(monkeypatch, *, club_path_deg, tier):
+        """Stand in for the camera fusion stage, which owns the fused fields."""
+
+        def fuse(shot, _camera_capture):
+            shot.experimental_fused_club_path_deg = club_path_deg
+            shot.experimental_fused_club_path_confidence = tier
+            shot.experimental_fused_status = "fused"
+            return 0.0
+
+        monkeypatch.setattr(server_module, "_fuse_camera_measurements", fuse)
+
+    def test_camera_fused_club_path_drives_spin_axis_when_confident(self, monkeypatch):
+        self._camera_fusion_reporting(monkeypatch, club_path_deg=-3.0, tier="high")
+        shot = self._spin_axis_shot(club_path_deg=None)
+
+        self._run_with_no_radar_hardware(monkeypatch, shot)
+
+        assert shot.spin_axis_deg == pytest.approx(10.8)
+        assert shot.delivery_club_path_source == "camera"
+        assert shot.club_path_deg is None  # the experimental path is not promoted
+
+    def test_low_confidence_camera_club_path_gives_no_spin_axis(self, monkeypatch):
+        self._camera_fusion_reporting(monkeypatch, club_path_deg=-3.0, tier="low")
+        shot = self._spin_axis_shot(club_path_deg=None)
+
+        self._run_with_no_radar_hardware(monkeypatch, shot)
+
+        assert shot.spin_axis_deg is None
+        assert shot.face_angle_deg is None
+
+    def test_estimated_launch_angle_gives_no_spin_axis(self, monkeypatch):
+        shot = self._spin_axis_shot(
+            launch_angle_vertical=None,
+            launch_angle_vertical_confidence=None,
+            launch_angle_vertical_source=None,
+            angle_source=None,
+        )
+
+        self._run_with_no_radar_hardware(monkeypatch, shot)
+
+        assert shot.launch_angle_vertical_source == "estimated"
+        assert shot.spin_axis_deg is None
+
+    def test_driver_spin_axis_is_withheld_unless_opted_in(self, monkeypatch):
+        withheld = self._spin_axis_shot(club=ClubType.DRIVER, launch_angle_vertical=12.0)
+        self._run_with_no_radar_hardware(monkeypatch, withheld)
+
+        monkeypatch.setattr(server_module, "wood_spin_axis_enabled", True)
+        opted_in = self._spin_axis_shot(club=ClubType.DRIVER, launch_angle_vertical=12.0)
+        self._run_with_no_radar_hardware(monkeypatch, opted_in)
+
+        assert withheld.spin_axis_deg is None
+        assert withheld.face_angle_deg is not None
+        assert opted_in.spin_axis_deg is not None and opted_in.spin_axis_deg > 0
+
+    def test_mock_shot_keeps_the_direction_its_generator_chose(self, monkeypatch):
+        shot = self._spin_axis_shot(mode="mock", spin_axis_deg=-4.2)
+
+        self._run_with_no_radar_hardware(monkeypatch, shot)
+
+        assert shot.spin_axis_deg == pytest.approx(-4.2)
+        assert shot.face_angle_deg is None
+
+    def test_club_delivery_is_serialized(self, monkeypatch):
+        shot = self._spin_axis_shot(club_angle_deg=-5.0)
+
+        self._run_with_no_radar_hardware(monkeypatch, shot)
+
+        payload = shot.to_dict()
+        assert payload["face_angle_deg"] == pytest.approx(2.2)
+        assert payload["face_to_path_deg"] == pytest.approx(5.2)
+        assert payload["dynamic_loft_deg"] == pytest.approx(22.3)
+        assert payload["spin_loft_deg"] == pytest.approx(27.3)
+        assert payload["delivery_club_path_source"] == "measured"
+        assert payload["delivery_attack_angle_source"] == "measured"
 
 
 class TestBallisticsConfiguration:
@@ -4506,6 +4616,9 @@ class TestBallisticsConfiguration:
 
     def test_runtime_default_enables_ballistics(self):
         assert server_module.ballistics_enabled is True
+
+    def test_runtime_default_withholds_the_spin_axis_of_woods(self):
+        assert server_module.wood_spin_axis_enabled is False
 
 
 class TestBatteryConfiguration:

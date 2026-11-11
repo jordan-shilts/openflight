@@ -103,6 +103,49 @@ the club-typical value is used — see
 $170 \cdot v \cdot \sin(\text{LA})^{1.2}$ even when a measured value exists,
 keeping the measured number in `spin_rpm_measured` for offline scoring.
 
+## Curve: spin axis from the D-plane
+
+A ball curves when its spin axis is tilted, and that tilt comes from the face
+pointing somewhere other than where the club is travelling. OpenFlight does not
+measure the spin axis; it derives it (`src/openflight/d_plane.py`) from four
+things it does measure or assume:
+
+| Input | Source |
+| --- | --- |
+| Launch direction | IWR6843 or camera, confidence at least 0.6 |
+| Club path | A club radar, or the camera-fused path at tier high or medium |
+| Launch angle | IWR6843 (measured, not the fallback estimate) |
+| Attack angle | Camera-fused at tier high or medium, else the club's typical value |
+
+The face angle follows from launch direction and club path
+($\text{start} = s \cdot \text{face} + (1 - s) \cdot \text{path}$, with $s$
+about 0.85 for a driver and 0.75 for irons), dynamic loft the same way from
+launch angle and attack angle, and the spin axis is the tilt of the vector
+perpendicular to the plane holding the club's velocity and the face normal. The
+result is limited to ±30°. If any input is missing or untrusted there is no
+spin axis and the ball flies straight along its start line.
+
+Against the committed TrackMan session (TrackMan's own launch and delivery fed
+through the model, so this is the ceiling, not live accuracy):
+
+| Club | Shots | Mean spin-axis error | Earlier rule (launch direction − path) |
+| --- | --- | --- | --- |
+| 7-iron | 9 | 0.6° | 4.5° |
+| Pitching wedge | 6 | 0.1° | 1.1° |
+| Driver | 8 | 17.6° | 9.6° |
+
+The driver row is why **drivers, woods and hybrids get no spin axis by
+default**. Those drives were struck 5-27 mm off-centre, and on a wood an
+off-centre strike twists the head and spins the ball sideways (gear effect) by
+about as much as face-to-path does. OpenFlight cannot see where on the face the
+ball was struck, so the derived curve for those clubs can be far out or
+reversed. `--wood-spin-axis` turns it on anyway. Face angle and face-to-path
+are still reported for every club: they matched TrackMan to 0.1° on all three.
+
+Live, the curve is only as good as the launch direction and club path that
+feed it. One degree of error in face-to-path moves the spin axis about 2° on a
+7-iron and 4-5° on a driver.
+
 Shot finalization in the server is the only place that writes
 `carry_spin_adjusted` for a live shot: the simulator when it can run, the
 spin table otherwise. The same committed number is what the kiosk shows and

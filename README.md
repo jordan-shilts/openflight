@@ -34,6 +34,7 @@ Doppler radar, with an optional TI IWR6843 angle radar.
 - **Smash Factor**: Ball speed / club speed ratio
 - **Launch Angle**: Measured by the IWR6843; estimated when no trusted radar angle is available
 - **Club Path**: Experimental pre-impact estimate from the IWR6843
+- **Face Angle and Curve**: Derived from launch direction and club path (D-plane); curve for irons and wedges only by default
 - **Spin Rate**: Experimental candidate from rolling-buffer I/Q; not used for carry by default
 - **Carry Distance**: Ballistic model with explicit fallbacks for missing measurements
 
