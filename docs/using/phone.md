@@ -17,6 +17,8 @@ For the native companion apps over Bluetooth or the shot stream, see
 2. On the touchscreen, tap the footer logo, then **Open on your phone**.
 3. Point the phone's camera at the QR code and open the link.
 
+![The Open on your phone screen: a QR code, three steps and the address](images/phone-open-on-your-phone.png)
+
 The address is also printed next to the code, for example
 `http://192.168.1.23:8080`, so it can be typed by hand. The code uses the Pi's
 IP address because a `.local` name does not resolve on every network; the
@@ -35,6 +37,10 @@ IP address because a `.local` name does not resolve on every network; the
 
     1. Open the link in **Chrome**.
     2. Tap the **⋮** menu, then **Add to Home screen**.
+
+Every tab fits a phone held upright:
+
+![Live's Flight view on a phone held upright](images/phone-flight-view.png){ width="320" }
 
 ## Limits
 

@@ -162,6 +162,8 @@ target line and how far left or right it landed; the strip appears only when
 the ball's direction was measured. Mock shots (`--mock`) run the simulator too. The points stay out of the
 session log, cloud uploads, phone events and simulator connectors.
 
+![Live's Flight view: the side-on arc with the top-view strip underneath](../using/images/flight-top-view.png)
+
 ## Disabling it
 
 ```bash
