@@ -13,11 +13,19 @@
   flex-direction: column;
   height: 100vh;
   max-height: 100vh;
+  /* dvh: a phone browser's toolbars must not cover the footer. Same as vh on the kiosk. */
+  height: 100dvh;
+  max-height: 100dvh;
   overflow: hidden;
   background: var(--color-bg);
   color: var(--color-text);
   /* Containing block for the menu sheet and picker overlay. */
   position: relative;
+  /* A home-screen app runs under the phone's notch. Borders, not padding, so the
+     overlays placed against this box stay clear too. All zero on the kiosk. */
+  border-style: solid;
+  border-color: var(--color-status-bar);
+  border-width: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
   /* Header chips (Shots / Camera) set the chrome height for every screen. */
   --panel-control-height: 32px;
 }
@@ -270,6 +278,8 @@
   gap: 1.6vw;
   padding: 8px 2.5vw;
   border-top: 1px solid var(--color-border);
+  /* Lifts the tabs above a phone's home indicator; zero on the kiosk. */
+  border-bottom: env(safe-area-inset-bottom, 0px) solid var(--color-surface);
   flex-shrink: 0;
   background: var(--color-surface);
 }
@@ -1414,6 +1424,8 @@
   position: absolute;
   left: 20px;
   bottom: 66px;
+  /* The footer grows by the phone's home-indicator inset; zero on the kiosk. */
+  margin-bottom: env(safe-area-inset-bottom, 0px);
   width: 320px;
   max-height: calc(100% - 86px);
   overflow-y: auto;
@@ -1562,6 +1574,12 @@
   background: var(--color-bg);
   display: flex;
   flex-direction: column;
+}
+
+/* Full-screen sheets keep their last row above the phone's home indicator. */
+.picker-overlay,
+.profile-name-modal {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .picker-overlay__header {
