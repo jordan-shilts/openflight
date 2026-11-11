@@ -110,6 +110,9 @@ def putt_roll_distance_ft(ball_speed_mph: float) -> float:
     return roll_m * M_TO_YD * FT_PER_YD
 
 
+SpinSource = Literal["measured", "club_typical"]
+
+
 @dataclass
 class LaunchConditions:
     """Deterministic launch parameters for the physics model or simulator export."""
@@ -119,7 +122,7 @@ class LaunchConditions:
     launch_angle_h: float
     spin_rpm: float
     spin_axis_deg: float
-    spin_source: Literal["measured", "club_typical"]
+    spin_source: SpinSource
 
 
 @dataclass
@@ -184,31 +187,42 @@ def display_trajectory(
     }
 
 
+def resolve_spin(shot: Shot) -> tuple[float, SpinSource]:
+    """
+    The one spin a shot commits to, with where it came from.
+
+    The measurement counts only when it is positive and its confidence is at
+    least SPIN_CONFIDENCE_HIGH; otherwise the club-typical value stands in.
+    The kiosk's carry and every simulator connector take their spin from
+    here, so the flight a simulator draws runs on the spin the Carry tile was
+    computed from.
+    """
+    use_measured = (
+        shot.spin_rpm is not None
+        and shot.spin_rpm > 0
+        and shot.spin_confidence is not None
+        and shot.spin_confidence >= SPIN_CONFIDENCE_HIGH
+    )
+    if use_measured:
+        return float(shot.spin_rpm), "measured"
+    return (
+        CLUB_TYPICAL_SPIN_RPM.get(shot.club, CLUB_TYPICAL_SPIN_RPM[ClubType.UNKNOWN]),
+        "club_typical",
+    )
+
+
 def resolve_launch(shot: Shot) -> Optional[LaunchConditions]:
     """
     Produce committed launch conditions from a shot.
 
     Returns None if the vertical launch angle is unavailable (no physics
-    simulation possible without it). Spin is taken from the measurement only
-    when confidence >= SPIN_CONFIDENCE_HIGH; otherwise a club-typical value
-    is substituted and `spin_source` is set to "club_typical".
+    simulation possible without it). Spin and `spin_source` come from
+    `resolve_spin`.
     """
     if shot.launch_angle_vertical is None:
         return None
 
-    use_measured = (
-        shot.spin_rpm is not None
-        and shot.spin_confidence is not None
-        and shot.spin_confidence >= SPIN_CONFIDENCE_HIGH
-    )
-    if use_measured:
-        spin_rpm = float(shot.spin_rpm)
-        source: Literal["measured", "club_typical"] = "measured"
-    else:
-        spin_rpm = CLUB_TYPICAL_SPIN_RPM.get(
-            shot.club, CLUB_TYPICAL_SPIN_RPM[ClubType.UNKNOWN]
-        )
-        source = "club_typical"
+    spin_rpm, source = resolve_spin(shot)
 
     return LaunchConditions(
         ball_speed_mph=shot.ball_speed_mph,

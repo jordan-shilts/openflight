@@ -97,7 +97,9 @@ from the OPS243. The other two may be missing:
 
 Measured spin is only trusted above `SPIN_CONFIDENCE_HIGH` (0.7). Below that,
 the club-typical value is used — see
-[rolling buffer & spin detection](rolling-buffer.md) for why.
+[rolling buffer & spin detection](rolling-buffer.md) for why. Simulator
+connectors send that same spin (`ballistics.resolve_spin`), so the flight a
+simulator draws runs on the spin the Carry tile was computed from.
 
 `--calculated-spin` forces the kinematic estimate
 $170 \cdot v \cdot \sin(\text{LA})^{1.2}$ even when a measured value exists,

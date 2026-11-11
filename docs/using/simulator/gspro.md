@@ -89,7 +89,7 @@ requirements and setup specific to GSPro.
 |---|---|
 | `BallData.Speed` | measured ball speed (required — shot dropped if missing) |
 | `BallData.VLA` / `HLA` | measured launch angles, else model fallback |
-| `BallData.TotalSpin` | measured spin if high-confidence, else per-club model |
+| `BallData.TotalSpin` | measured spin if high-confidence, else the club-typical spin the kiosk's carry uses |
 | `BallData.SpinAxis` | spin axis derived from launch direction and club path ([D-plane](../../how-it-works/ballistics.md#curve-spin-axis-from-the-d-plane)), else `0`. Irons and wedges only, unless `--wood-spin-axis` |
 | `BallData.BackSpin` / `SideSpin` | derived from total spin + axis |
 | `BallData.CarryDistance` | OpenFlight's carry estimate |

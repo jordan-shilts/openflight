@@ -58,6 +58,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [Security and scope](ios-ble.md#security-and-scope).
 
 ### Changed
+- **A simulator gets the spin the kiosk's carry ran on.** When spin is not
+  measured, the simulator connectors sent their own per-club table (a 7-iron at
+  7000 rpm) while the kiosk computed carry from the club-typical one (6500 rpm),
+  so the flight a simulator drew ran on a different spin than the Carry tile.
+  Both now call `ballistics.resolve_spin`. The largest moves are the hybrids
+  (800-900 rpm up) and 7-iron to lob wedge (500 rpm down). On the 22
+  TrackMan-measured shots in the repo the shared table's median error is 14%,
+  against 20% for the one it replaces.
 - **The OPS sound-trigger hardware test defaults to the Pi GPIO UART.**
   `scripts/hardware-test/test_sound_trigger.py` now uses `/dev/ttyAMA0`
   when `--port` is omitted. For USB, pass the device explicitly, for example

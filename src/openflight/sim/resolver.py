@@ -8,58 +8,20 @@ serialize the ResolvedShot into their own wire format.
 import math
 from typing import Dict, Tuple
 
-from openflight.clubs import ClubType
+from openflight.ballistics import resolve_spin
 from openflight.clubs.physics import get_club_physics
 from openflight.d_plane import TRUSTED_DELIVERY_TIERS, trusted_club_path
-from openflight.launch_monitor import (
-    SPIN_CONFIDENCE_HIGH,
-    Shot,
-)
+from openflight.launch_monitor import Shot
 from openflight.sim.types import IncompleteShotError, PlayerState, ResolvedShot
 
 # confidence tiers of the camera attack angle that are sent to a simulator
 SENDABLE_ATTACK_TIERS = TRUSTED_DELIVERY_TIERS
 
-# Temporary per-club spin model (rpm), used only when a measured spin is absent
-# or low-confidence. Slated for replacement by the shared ballistics spin model.
-SPIN_MODEL_RPM: Dict[ClubType, float] = {
-    ClubType.DRIVER: 2500.0,
-    ClubType.WOOD_3: 3000.0,
-    ClubType.WOOD_5: 3500.0,
-    ClubType.WOOD_7: 4000.0,
-    ClubType.HYBRID_3: 3500.0,
-    ClubType.HYBRID_5: 4000.0,
-    ClubType.HYBRID_7: 4500.0,
-    ClubType.HYBRID_9: 5000.0,
-    ClubType.IRON_2: 4000.0,
-    ClubType.IRON_3: 4500.0,
-    ClubType.IRON_4: 5000.0,
-    ClubType.IRON_5: 5500.0,
-    ClubType.IRON_6: 6000.0,
-    ClubType.IRON_7: 7000.0,
-    ClubType.IRON_8: 8000.0,
-    ClubType.IRON_9: 9000.0,
-    ClubType.PW: 9500.0,
-    ClubType.GW: 10000.0,
-    ClubType.SW: 10500.0,
-    ClubType.LW: 11000.0,
-    ClubType.PUTTER: 80.0,
-    ClubType.UNKNOWN: 5000.0,
-}
-
-_DEFAULT_SPIN_RPM = 5000.0
-
 
 def _resolve_total_spin(shot: Shot) -> Tuple[float, str]:
-    """Measured spin if present and high-confidence, else the per-club model."""
-    if (
-        shot.spin_rpm is not None
-        and shot.spin_rpm > 0
-        and shot.spin_confidence is not None
-        and shot.spin_confidence >= SPIN_CONFIDENCE_HIGH
-    ):
-        return float(shot.spin_rpm), "measured"
-    return SPIN_MODEL_RPM.get(shot.club, _DEFAULT_SPIN_RPM), "estimated"
+    """The spin the kiosk's carry ran on, with simulator provenance."""
+    spin_rpm, source = resolve_spin(shot)
+    return spin_rpm, "measured" if source == "measured" else "estimated"
 
 
 def resolve_shot(shot: Shot, player_state: PlayerState) -> ResolvedShot:
