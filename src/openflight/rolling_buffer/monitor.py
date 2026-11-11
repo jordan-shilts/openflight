@@ -14,6 +14,7 @@ from typing import Callable, List, Optional
 from ..clubs import ClubType
 from ..clubs.physics import get_club_physics
 from ..launch_monitor import Shot, estimate_carry_distance, summarize_shots
+from ..measuring_status import MEASURING, OFFLINE, READY
 from ..ops243 import OPS243Radar, SpeedReading
 from ..session_logger import get_session_logger, log_session_error
 from .processor import RollingBufferProcessor
@@ -217,6 +218,13 @@ class RollingBufferMonitor:
         self._live_callback: Optional[Callable[[SpeedReading], None]] = None
         self._diagnostic_callback: Optional[Callable[[dict], None]] = None
         self._processing_callback: Optional[Callable[[str], None]] = None
+        self._readiness_callback: Optional[Callable[[str], None]] = None
+        # Serializes readiness reports with stop(), so a report racing a stop
+        # cannot land after the stop's OFFLINE.
+        self._readiness_lock = threading.Lock()
+        # Set when a wait on the radar raised (unplugged USB, serial error) and
+        # cleared when one returns, so a dead link never reports ready.
+        self._radar_fault = False
         self._shots: List[Shot] = []
         self._shot_sequence_number = 0
         self._current_club: ClubType = ClubType.DRIVER
@@ -302,6 +310,7 @@ class RollingBufferMonitor:
         live_callback: Optional[Callable[[SpeedReading], None]] = None,
         diagnostic_callback: Optional[Callable[[dict], None]] = None,
         processing_callback: Optional[Callable[[str], None]] = None,
+        readiness_callback: Optional[Callable[[str], None]] = None,
     ):
         """
         Start monitoring for shots.
@@ -311,11 +320,18 @@ class RollingBufferMonitor:
             live_callback: Called for live readings (limited in rolling buffer mode)
             diagnostic_callback: Called with trigger diagnostic data for UI display
             processing_callback: Called with "started" or "failed" around shot processing
+            readiness_callback: Called with whether a swing now would be
+                measured: ``measuring_status.READY`` while listening to an
+                armed radar, ``MEASURING`` from the first byte of a dump until
+                the loop listens again, ``OFFLINE`` when stopped, after a
+                radar error, or when the re-arm failed. Repeats are expected.
         """
         self._shot_callback = shot_callback
         self._live_callback = live_callback
         self._diagnostic_callback = diagnostic_callback
         self._processing_callback = processing_callback
+        self._readiness_callback = readiness_callback
+        self._radar_fault = False
         self._stop_event.clear()
         self._running = True
 
@@ -329,8 +345,12 @@ class RollingBufferMonitor:
 
     def stop(self):
         """Stop monitoring."""
-        self._running = False
+        with self._readiness_lock:
+            self._running = False
         self._stop_event.set()
+        # Before the join: a dump in flight is allowed to finish, but nothing
+        # after this point is measured, so the light goes dark now.
+        self._report_readiness(OFFLINE)
         if self._capture_thread:
             capture_thread = self._capture_thread
             # Idle sound waits are cancelled immediately. If bytes are
@@ -354,12 +374,13 @@ class RollingBufferMonitor:
         if not self._running:
             raise RuntimeError("Capture monitor is not running")
 
-        callbacks = (
-            self._shot_callback,
-            self._live_callback,
-            self._diagnostic_callback,
-            self._processing_callback,
-        )
+        callbacks = {
+            "shot_callback": self._shot_callback,
+            "live_callback": self._live_callback,
+            "diagnostic_callback": self._diagnostic_callback,
+            "processing_callback": self._processing_callback,
+            "readiness_callback": self._readiness_callback,
+        }
         self.stop()
         if self._capture_thread is not None and self._capture_thread.is_alive():
             raise RuntimeError("Capture thread did not stop; radar was not reconfigured")
@@ -373,13 +394,39 @@ class RollingBufferMonitor:
             sample_rate_ksps=self.sample_rate_ksps,
         )
         self.trigger.reset()
-        self.start(
-            shot_callback=callbacks[0],
-            live_callback=callbacks[1],
-            diagnostic_callback=callbacks[2],
-            processing_callback=callbacks[3],
-        )
+        self.start(**callbacks)
         logger.warning("[MONITOR] Manual OPS reinitialisation commands completed; trigger not yet verified")
+
+    def _report_readiness(self, state: str) -> None:
+        """Tell the status light whether a swing now would be measured.
+
+        A stopping monitor only ever reports OFFLINE, so a dump that finishes
+        during shutdown cannot light the LED again. Callback errors are logged
+        and never break capture. The callback runs under a lock and must not
+        call back into the monitor.
+        """
+        if self._readiness_callback is None:
+            return
+        with self._readiness_lock:
+            if state != OFFLINE and not self._running:
+                return
+            try:
+                self._readiness_callback(state)
+            except Exception:
+                logger.warning("[MONITOR] Readiness callback failed", exc_info=True)
+
+    def _listening_state(self) -> str:
+        """READY when the wait about to start can catch a swing, else OFFLINE.
+
+        The sound and internal hardware triggers depend on the board having
+        been re-armed after its last dump; the speed trigger arms itself
+        inside its wait, so only a radar fault counts against it.
+        """
+        if self._radar_fault:
+            return OFFLINE
+        if self.trigger_type in ("sound", "hardware") and not self.radar.rolling_buffer_armed:
+            return OFFLINE
+        return READY
 
     def _notify_processing(self, state: str) -> None:
         """Report shot-processing lifecycle without letting UI errors break capture."""
@@ -478,6 +525,7 @@ class RollingBufferMonitor:
             trigger_diagnostic = {}
             trigger_event_recorded = False
             trigger_latency_ms = 0.0
+            waiting_on_radar = False
             try:
                 trigger_start = time.time()
 
@@ -494,12 +542,19 @@ class RollingBufferMonitor:
                 def on_capture_started() -> None:
                     nonlocal capture_started
                     capture_started = True
+                    self._report_readiness(MEASURING)
                     self._notify_processing("capturing")
 
                 if self.trigger_type == "sound":
                     trigger_kwargs["cancel_event"] = self._stop_event
                     trigger_kwargs["capture_started_callback"] = on_capture_started
+                # The light is solid only while this wait can catch a swing.
+                self._report_readiness(self._listening_state())
+                waiting_on_radar = True
                 capture = self.trigger.wait_for_trigger(**trigger_kwargs)
+                waiting_on_radar = False
+                # A wait that returned, capture or timeout, proves the link.
+                self._radar_fault = False
 
                 if not self._running:
                     break
@@ -514,7 +569,9 @@ class RollingBufferMonitor:
                         self._notify_processing("failed")
                     continue
 
-                # Process capture (FFT + speed/spin extraction)
+                # Process capture (FFT + speed/spin extraction). Triggers with
+                # no first-byte callback start measuring here.
+                self._report_readiness(MEASURING)
                 self._notify_processing("calculating")
                 process_start = time.time()
                 processed = self.processor.process_capture(
@@ -753,6 +810,11 @@ class RollingBufferMonitor:
                 self.trigger.reset()
 
             except Exception as e:
+                if waiting_on_radar:
+                    # The radar itself failed (unplugged, serial error): stay
+                    # dark until a later wait returns, not just for the back-off.
+                    self._radar_fault = True
+                self._report_readiness(OFFLINE)
                 self._notify_processing("failed")
                 logger.error("[MONITOR] Capture loop error: %s", e, exc_info=True)
                 if capture is not None and not trigger_event_recorded:

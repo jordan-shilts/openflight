@@ -20,6 +20,7 @@ def make_monitor():
     monitor._live_callback = Mock()
     monitor._diagnostic_callback = Mock()
     monitor._processing_callback = Mock()
+    monitor._readiness_callback = Mock()
 
     monitor.trigger = Mock()
     monitor.trigger.pre_trigger_segments = 16
@@ -32,6 +33,7 @@ def make_monitor():
 
 
 def test_manual_recovery_restores_radar_and_callbacks():
+    """Every callback survives, the status light's readiness feed included."""
     monitor = make_monitor()
 
     monitor.reinitialize_radar()
@@ -50,6 +52,7 @@ def test_manual_recovery_restores_radar_and_callbacks():
         live_callback=monitor._live_callback,
         diagnostic_callback=monitor._diagnostic_callback,
         processing_callback=monitor._processing_callback,
+        readiness_callback=monitor._readiness_callback,
     )
 
 
