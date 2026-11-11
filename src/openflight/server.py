@@ -53,7 +53,12 @@ from .clubs.physics import (
 )
 from .d_plane import estimate_club_delivery
 from .launch_monitor import SPIN_CONFIDENCE_HIGH, SPIN_CONFIDENCE_RELIABLE, Shot, summarize_shots
-from .measuring_status import MeasuringStatus, parse_report as parse_measuring_report
+from .measuring_status import (
+    OFFLINE,
+    READY,
+    MeasuringStatus,
+    parse_report as parse_measuring_report,
+)
 from .ops243 import (
     UART_BAUD_COMMANDS,
     Direction,
@@ -89,6 +94,11 @@ from .sim import (
 from .speed_correction import correct_ball_speed
 from .spin_estimate import calculated_spin_rpm
 from .startup_status import StartupStatusReporter, configured_startup_components
+from .status_led import (
+    StatusLight,
+    check_pin as check_status_led_pin,
+    create_status_light,
+)
 from .swing_speed import SwingSpeedEvent
 
 # Configure logging
@@ -206,6 +216,31 @@ sim_player_state = SimPlayerState(shot_counter=initial_shot_counter())
 
 # Optional Bluetooth Low Energy publisher for the iOS app.
 ble_publisher = None
+
+# Optional front-panel status light (--status-led-gpio). None when not asked
+# for, or when the GPIO could not be driven. Each source below reports its own
+# readiness; the light shows the worst (see status_led.StatusLight).
+status_light: Optional[StatusLight] = None
+STATUS_SOURCE_MONITOR = "monitor"  # the OPS243 capture loop, mock or swing-speed monitor
+STATUS_SOURCE_IWR6843 = "iwr6843"  # the TI dump that follows the same sound edge
+STATUS_SOURCE_RECORDER = "recorder"  # the swing recorder feeding a --mock kiosk
+
+
+def _report_status_light(source: str, state: str) -> None:
+    """Tell the status light what ``source`` is doing, when a light is fitted."""
+    if status_light is not None:
+        status_light.report(source, state)
+
+
+def on_capture_readiness(state: str) -> None:
+    """The OPS243 capture loop is listening, measuring, or not listening."""
+    _report_status_light(STATUS_SOURCE_MONITOR, state)
+
+
+def on_iwr6843_status(state: str) -> None:
+    """The IWR6843 is armed, dumping a swing, or not accepting edges."""
+    _report_status_light(STATUS_SOURCE_IWR6843, state)
+
 
 # One Pi-owned selection is shared by the browser UI and every phone/tablet.
 # Monitors start on driver until ``_restore_saved_club`` applies the last pick,
@@ -480,6 +515,9 @@ def _cleanup_hardware_for_shutdown() -> bool:
             return False
         shutdown_cleanup_started = True
 
+    # First: the golfer must stop swinging as soon as shutdown begins.
+    if status_light is not None:
+        _run_shutdown_step("status light off", status_light.close)
     if kld7_vertical:
         _run_shutdown_step("K-LD7 vertical stop", kld7_vertical.stop)
     if kld7_horizontal:
@@ -1507,6 +1545,9 @@ def init_iwr6843(
                 if camera_capture_runtime is not None
                 else None
             ),
+            # A swing during the ~7 s TI dump gets no launch angle, so the
+            # status light keeps blinking until the dump completes.
+            status_callback=on_iwr6843_status,
         )
         # OPS initialization can pulse the shared sound gate. Configure TI now,
         # but do not accept edges until the OPS trigger path is fully running.
@@ -1974,7 +2015,18 @@ def _emit_measuring_status(payload: dict) -> None:
     socketio.emit("measuring_status", payload)
 
 
-measuring_status = MeasuringStatus(_emit_measuring_status)
+def _on_measuring_status_change(payload: dict) -> None:
+    """The recorder's state changed (or went stale): tell the screen and the light.
+
+    Only changes come here, never a reconnecting client's snapshot. Until the
+    recorder first reports, the light follows the mock monitor alone (solid);
+    from then on the recorder's ready/measuring/offline counts too.
+    """
+    _emit_measuring_status(payload)
+    _report_status_light(STATUS_SOURCE_RECORDER, payload["state"])
+
+
+measuring_status = MeasuringStatus(_on_measuring_status_change)
 
 
 @app.route("/api/shots/measuring", methods=["POST"])
@@ -4797,17 +4849,21 @@ def start_monitor(
             event_callback=on_swing_speed_detected,
             live_callback=on_live_reading,
         )
+        # Speed reps stream continuously; there is no dump to wait out.
+        _report_status_light(STATUS_SOURCE_MONITOR, READY)
     elif not mock:
 
         def on_trigger_diagnostic(data: dict):
             """Forward trigger diagnostics to connected UI clients."""
             socketio.emit("trigger_diagnostic", data)
 
+        # The capture loop reports its own readiness from here on.
         monitor.start(  # pylint: disable=unexpected-keyword-arg
             shot_callback=on_shot_detected,
             live_callback=on_live_reading,
             diagnostic_callback=on_trigger_diagnostic,
             processing_callback=on_shot_processing,
+            readiness_callback=on_capture_readiness,
         )
         if iwr6843_runtime is not None:
             iwr6843_runtime.capture_monitor.arm()
@@ -4817,6 +4873,9 @@ def start_monitor(
             live_callback=on_live_reading,
             processing_callback=on_shot_processing,
         )
+        # Simulate shot is always available. A swing recorder that reports
+        # (POST /api/shots/measuring) adds its own state on top.
+        _report_status_light(STATUS_SOURCE_MONITOR, READY)
 
 
 def _cloud_raw_uploads_enabled() -> bool:
@@ -4908,6 +4967,9 @@ def _run_cloud_push_for_ui():
 def stop_monitor():
     """Stop the launch monitor."""
     global monitor, mock_swing_speed_mode  # pylint: disable=global-statement
+
+    # Before the (possibly slow) stop: nothing from here on is measured.
+    _report_status_light(STATUS_SOURCE_MONITOR, OFFLINE)
 
     # End session logging
     session_logger = get_session_logger()
@@ -5331,6 +5393,21 @@ def _add_battery_arguments(parser):
     )
 
 
+def _add_status_light_arguments(parser):
+    """Add the optional front-panel status light."""
+    parser.add_argument(
+        "--status-led-gpio",
+        type=int,
+        default=None,
+        metavar="BCM",
+        help=(
+            "BCM GPIO driving a front-panel status LED: solid when ready for a swing, "
+            "blinking while the last swing is measured, off when not ready. "
+            "Suggested: 23 (physical pin 16). Default: no LED"
+        ),
+    )
+
+
 def _apply_kld7_device_defaults(args, dev_root: Path = Path("/dev")) -> None:
     """Preserve kiosk symlink discovery while keeping CLI policy in the server."""
     vertical = dev_root / "kld7_vertical"
@@ -5497,6 +5574,7 @@ def main():
     )
     parser.add_argument("--no-logging", action="store_true", help="Disable session logging")
     _add_battery_arguments(parser)
+    _add_status_light_arguments(parser)
     parser.add_argument(
         "--sim",
         action="store_true",
@@ -5906,6 +5984,13 @@ def main():
     if args.ops_baud is not None and args.ops_baud not in UART_BAUD_COMMANDS:
         supported = ", ".join(str(b) for b in sorted(UART_BAUD_COMMANDS))
         parser.error(f"--ops-baud must be one of {supported} (got {args.ops_baud})")
+    # Driving a pin another part already uses could short a signal or toggle
+    # the UPS charger, so refuse before anything touches the GPIO.
+    if args.status_led_gpio is not None:
+        try:
+            check_status_led_pin(args.status_led_gpio, sound_trigger_pin=args.iwr6843_trigger_pin)
+        except ValueError as error:
+            parser.error(f"--status-led-gpio: {error}")
     global ballistics_enabled
     global battery_provider
     global profile_store
@@ -5955,6 +6040,16 @@ def main():
     print("  OpenFlight UI Server")
     print("=" * 50)
     print()
+
+    # Claimed before any hardware starts, switched off: the light stays dark
+    # until every reporting source says a swing would be measured.
+    global status_light  # pylint: disable=global-statement
+    if args.status_led_gpio is not None:
+        status_light = create_status_light(args.status_led_gpio)
+        if status_light is not None:
+            print(f"Status light: BCM{args.status_led_gpio}")
+        else:
+            print("Status light unavailable - running without it (see the warning above)")
 
     # Initialize session logger (enabled for both real and mock modes)
     if not args.no_logging:
