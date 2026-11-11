@@ -105,6 +105,47 @@ def test_missing_club_path_falls_back_to_zero():
 
 
 @pytest.mark.parametrize("tier,sent", [("high", True), ("medium", True), ("low", False), ("withheld", False), (None, False)])
+def test_camera_club_path_is_sent_only_when_confident(tier, sent):
+    shot = _shot(spin_rpm=2500.0, spin_confidence=0.9)
+    shot.experimental_fused_club_path_deg = -2.6
+    shot.experimental_fused_club_path_confidence = tier
+    r = resolve_shot(shot, PlayerState())
+    if sent:
+        assert r.club_path_deg == -2.6
+        assert r.provenance["club_path"] == "measured"
+    else:
+        assert r.club_path_deg == 0.0
+        assert r.provenance["club_path"] == "estimated"
+
+
+def test_measured_club_path_wins_over_the_camera_one():
+    shot = _shot(club_path_deg=0.5)
+    shot.experimental_fused_club_path_deg = -2.6
+    shot.experimental_fused_club_path_confidence = "high"
+    assert resolve_shot(shot, PlayerState()).club_path_deg == 0.5
+
+
+def test_d_plane_face_angle_and_dynamic_loft_are_passed_through():
+    shot = _shot(face_angle_deg=1.8, dynamic_loft_deg=13.4)
+    r = resolve_shot(shot, PlayerState())
+    assert r.face_angle_deg == 1.8
+    assert r.dynamic_loft_deg == 13.4
+    assert r.provenance["face_angle"] == "measured"
+    assert r.provenance["dynamic_loft"] == "measured"
+    assert r.as_values()["face_angle"] == 1.8
+    assert r.as_values()["dynamic_loft"] == 13.4
+
+
+def test_missing_face_angle_and_dynamic_loft_are_none():
+    r = resolve_shot(_shot(), PlayerState())
+    assert r.face_angle_deg is None
+    assert r.dynamic_loft_deg is None
+    assert r.provenance["face_angle"] == "estimated"
+    assert r.provenance["dynamic_loft"] == "estimated"
+    assert r.as_values()["face_angle"] is None
+
+
+@pytest.mark.parametrize("tier,sent", [("high", True), ("medium", True), ("low", False), ("withheld", False), (None, False)])
 def test_camera_attack_angle_is_sent_only_when_confident(tier, sent):
     shot = _shot(spin_rpm=2500.0, spin_confidence=0.9)
     shot.experimental_fused_attack_angle_deg = -3.4
