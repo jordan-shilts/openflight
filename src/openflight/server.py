@@ -62,6 +62,7 @@ from .ops243 import (
     set_show_raw_readings,
 )
 from .phone_catch_up import PhoneShotCache, normalize_last_event_id, select_catch_up
+from .phone_link import phone_link
 from .phone_orientation import (
     PhoneOrientationMeasurement,
     PhoneOrientationValidationError,
@@ -1271,6 +1272,13 @@ def api_club_selection():
     if request.method == "GET":
         return current_club_selection()
     return apply_club_selection(request.get_json(silent=True))
+
+
+@app.route("/api/phone-link")
+def api_phone_link():
+    """Where a phone on the same network can open this UI (the kiosk's QR screen)."""
+    bind_host, port = request.server or (None, None)
+    return jsonify(phone_link(bind_host, port))
 
 
 @app.route("/<path:path>")
