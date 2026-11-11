@@ -102,6 +102,17 @@ class IWR6843CaptureMonitor:
         """Connected TI serial port."""
         return self.radar.port
 
+    @property
+    def trigger_input_active(self) -> bool | None:
+        """Whether the trigger line is high right now; None without a readable input.
+
+        A sound sensor whose GATE sits high with no sound sends no more rising
+        edges, so nothing triggers until it drops (on the SEN-14262 that means
+        R17 is missing or too large at 3.3 V).
+        """
+        value = getattr(self._button, "is_pressed", None)
+        return None if value is None else bool(value)
+
     def start(self, *, armed: bool = True) -> None:
         """Configure the radar and GPIO, optionally arming trigger capture."""
         if self._running:

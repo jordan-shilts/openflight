@@ -16,7 +16,10 @@ the frames around the biggest change with the hitting zone outlined. aim.jpg,
 saved at start, shows the first frame and the zone for aiming. --calibrate
 prints what the trigger sees once a second, for tuning --min-fraction.
 
-With --iwr6843 each trigger also captures the TI radar. --rig-setup-url follows the
+With --iwr6843 each trigger also captures the TI radar. --trigger sound starts
+each reading from the sound sensor instead (SEN-14262 GATE on GPIO 17): it fires
+on the strike itself, in any light, and the camera saves a clip around it
+without ever triggering on its own. --rig-setup-url follows the
 kiosk's Setup tab on every swing: the ball's apparent size and the case tilt go to
 the kiosk, and the geometry for that swing comes back. --status-to tells the kiosk
 when the radar is ready and when it is busy with a dump, so the Live screen can
@@ -83,6 +86,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--min-fraction", type=float, default=defaults.min_fraction)
     parser.add_argument("--min-delta", type=float, default=defaults.min_delta)
     parser.add_argument("--cooldown", type=float, default=defaults.cooldown_s)
+    parser.add_argument(
+        "--trigger",
+        choices=("camera", "sound"),
+        default="camera",
+        help=(
+            "What starts each reading: camera motion in the hitting zone, or the "
+            "sound sensor's GATE on --sound-pin (needs --iwr6843)"
+        ),
+    )
+    parser.add_argument(
+        "--sound-pin", type=int, default=17, help="BCM pin the sound sensor's GATE drives"
+    )
     parser.add_argument("--captures", type=int, default=0, help="Stop after N clips (0: no limit)")
     parser.add_argument(
         "--duration", type=float, default=0.0, help="Stop after N seconds (0: none)"
@@ -167,6 +182,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             parser.error(f"--{name.replace('_', '-')} must be positive")
     if args.ball_height_m is not None and args.ball_height_m < 0:
         parser.error("--ball-height-m cannot be negative")
+    if args.trigger == "sound" and not args.iwr6843:
+        parser.error("--trigger sound drives the TI radar's capture; add --iwr6843")
     return args
 
 
@@ -243,6 +260,8 @@ class TriggerWorker(threading.Thread):
         outdir: Path,
         calibrate: bool,
         on_trigger: Callable[[float], object] | None = None,
+        motion_triggers: bool = True,
+        gate_state: Callable[[], bool | None] | None = None,
     ):
         super().__init__(name="motion-trigger", daemon=True)
         self.frames: queue.Queue[np.ndarray] = queue.Queue(maxsize=256)
@@ -252,6 +271,10 @@ class TriggerWorker(threading.Thread):
         self.outdir = outdir
         self.calibrate = calibrate
         self.on_trigger = on_trigger
+        # False with --trigger sound: frames still feed aim.jpg and the stats
+        # line, but only the sound sensor starts a reading.
+        self.motion_triggers = motion_triggers
+        self.gate_state = gate_state
         self.dropped = 0
         self.triggers = 0
         self.stop_event = threading.Event()
@@ -283,24 +306,46 @@ class TriggerWorker(threading.Thread):
                 continue
             last = sample
             peak = max(peak, sample.fraction)
-            if sample.triggered:
-                # Freeze the radar first: its ring is only ~72 ms long.
-                if self.on_trigger is not None:
-                    self.on_trigger(time.time())
-                if self.runtime.notify_trigger():
-                    self.triggers += 1
-                    print(f"TRIGGER #{self.triggers}: {sample.fraction:.1%} of the zone changed")
-                else:
-                    print("trigger ignored: previous clip still saving")
+            self.handle_sample(sample)
             now = time.monotonic()
             if self.calibrate and now - window_start >= 1.0 and last is not None:
-                print(
-                    f"  {seen / (now - window_start):5.0f} fps | peak change {peak:.2%} "
-                    f"(fires at {self.trigger.settings.min_fraction:.1%}) | threshold "
-                    f"{last.threshold:.0f} counts | noise {last.diff_noise:.1f} | "
-                    f"{'armed' if last.armed else 'not armed'} | dropped {self.dropped}"
-                )
+                print(self.stats_line(seen / (now - window_start), peak, last))
                 window_start, seen, peak = now, 0, 0.0
+
+    def handle_sample(self, sample) -> None:
+        """Act on a motion sample: with camera triggering, a trigger starts a reading."""
+        if not (sample.triggered and self.motion_triggers):
+            return
+        # Freeze the radar first: its ring is only ~72 ms long.
+        if self.on_trigger is not None:
+            self.on_trigger(time.time())
+        if self.runtime.notify_trigger():
+            self.triggers += 1
+            print(f"TRIGGER #{self.triggers}: {sample.fraction:.1%} of the zone changed")
+        else:
+            print("trigger ignored: previous clip still saving")
+
+    def sound_trigger(self, timestamp: float) -> None:
+        """The radar took a sound-trigger edge: save the camera clip around it too."""
+        self.triggers += 1
+        saved = self.runtime.notify_trigger(timestamp)
+        print(f"TRIGGER #{self.triggers}: sound" + ("" if saved else " (camera busy, no clip)"))
+
+    def stats_line(self, fps: float, peak: float, last) -> str:
+        """The once-a-second --calibrate line."""
+        if self.motion_triggers:
+            fires = f"fires at {self.trigger.settings.min_fraction:.1%}"
+        else:
+            fires = "sound triggers"
+        line = (
+            f"  {fps:5.0f} fps | peak change {peak:.2%} ({fires}) | threshold "
+            f"{last.threshold:.0f} counts | noise {last.diff_noise:.1f} | "
+            f"{'armed' if last.armed else 'not armed'} | dropped {self.dropped}"
+        )
+        gate = None if self.gate_state is None else self.gate_state()
+        if gate:
+            line += " | sound GATE stuck high"
+        return line
 
 
 class NoTriggerInput:
@@ -820,8 +865,34 @@ def radar_trigger(monitor, kiosk_status: KioskStatus | None) -> Callable[[float]
     return on_trigger
 
 
-def start_radar(args: argparse.Namespace, session_dir: Path):
-    """Configure the TI radar for software triggers; return (monitor, calibration)."""
+def sound_trigger(worker_holder: dict, kiosk_status: KioskStatus | None) -> Callable[[float], None]:
+    """Called for each sound edge the radar accepted: show the wait, save the clip.
+
+    The radar refuses echoes within 0.1 s and anything while a dump is in
+    flight (the ball hitting the net, a second strike), so this runs once per
+    reading. An edge before the camera is up still gets its radar reading.
+    """
+
+    def on_edge(timestamp: float) -> None:
+        if kiosk_status is not None:
+            kiosk_status.measuring()
+        worker = worker_holder.get("worker")
+        if worker is not None:
+            worker.sound_trigger(timestamp)
+
+    return on_edge
+
+
+def start_radar(
+    args: argparse.Namespace,
+    session_dir: Path,
+    trigger_observers: list[Callable[[float], None]] | None = None,
+):
+    """Configure the TI radar; return (monitor, calibration).
+
+    With --trigger camera the radar takes software triggers from the camera;
+    with --trigger sound it listens to the sound sensor's GATE on --sound-pin.
+    """
     # pylint: disable=import-outside-toplevel
     from openflight.iwr6843.calibration import Calibration
     from openflight.iwr6843.calibration_session import clone_calibration
@@ -834,14 +905,26 @@ def start_radar(args: argparse.Namespace, session_dir: Path):
         radar_height_m=args.radar_height_m,
         ball_height_m=args.ball_height_m,
     )
+    sound = args.trigger == "sound"
     monitor = IWR6843CaptureMonitor(
         config_path=args.iwr6843_config,
         output_dir=session_dir / "iwr6843",
         port=args.iwr6843_port,
-        button_factory=NoTriggerInput,
+        gpio_pin=args.sound_pin,
+        # None: the monitor opens the real GPIO input (gpiozero on lgpio).
+        button_factory=None if sound else NoTriggerInput,
         save_dumps=True,
+        trigger_observers=trigger_observers if sound else None,
     )
-    monitor.start(armed=True)
+    try:
+        monitor.start(armed=True)
+    except Exception as error:  # pylint: disable=broad-exception-caught
+        if not sound:
+            raise
+        raise SystemExit(
+            f"Sound trigger unavailable on GPIO {args.sound_pin}: {error}. "
+            "Check gpiozero and lgpio in this Python, or use --trigger camera."
+        ) from error
     return monitor, calibration
 
 
@@ -879,13 +962,19 @@ def main(argv: list[str] | None = None) -> int:
         )
     )
     radar_monitor = radar_worker = ball_sizes = kiosk_status = None
+    worker_holder: dict[str, TriggerWorker] = {}
+    sound = args.trigger == "sound"
     if args.iwr6843:
-        radar_monitor, calibration = start_radar(args, session_dir)
-        ball_sizes = BallSizes()
         if args.status_to:
             kiosk_status = KioskStatus(
                 args.status_to, dump_s=dump_seconds_from_config(args.iwr6843_config)
             )
+        radar_monitor, calibration = start_radar(
+            args,
+            session_dir,
+            trigger_observers=[sound_trigger(worker_holder, kiosk_status)] if sound else None,
+        )
+        ball_sizes = BallSizes()
         radar_worker = RadarWorker(
             radar_monitor,
             calibration,
@@ -897,7 +986,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         geometry = "no --tee-m: ball speed only" if args.tee_m is None else f"tee {args.tee_m} m"
         print(f"TI radar armed on {radar_monitor.port} ({geometry})")
-    worker_holder: dict[str, TriggerWorker] = {}
+        if sound:
+            print(f"Sound trigger on GPIO {args.sound_pin}: the strike starts each reading")
+            if radar_monitor.trigger_input_active:
+                print(
+                    f"WARNING: GPIO {args.sound_pin} is already high with no swing. The sound "
+                    "sensor's GATE is stuck on (R17 missing or too large at 3.3 V, or it is "
+                    "too sensitive), so no strike can trigger until it drops."
+                )
     runtime = CameraCaptureRuntime(
         output_dir=session_dir,
         settings=settings,
@@ -910,7 +1006,11 @@ def main(argv: list[str] | None = None) -> int:
         roi=args.roi,
         outdir=session_dir,
         calibrate=args.calibrate,
-        on_trigger=radar_trigger(radar_monitor, kiosk_status) if radar_monitor else None,
+        on_trigger=(
+            radar_trigger(radar_monitor, kiosk_status) if radar_monitor and not sound else None
+        ),
+        motion_triggers=not sound,
+        gate_state=(lambda: radar_monitor.trigger_input_active) if sound else None,
     )
     worker_holder["worker"] = worker
 
