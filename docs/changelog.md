@@ -26,6 +26,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Top view on Flight.** When the ball's direction was measured, Live's Flight
   view adds a strip under the side view showing the flight from above, the
   target line, and how far left or right it landed.
+- **The touchscreen UI on your phone.** The menu behind the footer logo has an
+  **Open on your phone** screen with a QR code for the Pi's address
+  (`GET /api/phone-link`). The page now has a web app manifest and icons, so
+  Safari's **Add to Home Screen** opens it full screen, and every tab fits a
+  phone held upright. Same Wi-Fi only, plain HTTP, no login and no offline
+  mode; see [Use it on your phone](using/phone.md). On 800-wide kiosks the menu
+  is now two columns so the new button and Shut down fit without scrolling.
 - **Attack angle to the simulator.** A shot sent over GSPro Open Connect now
   carries the camera's experimental attack angle (`ClubData.AngleOfAttack`)
   when its confidence tier is high or medium; low and withheld estimates stay

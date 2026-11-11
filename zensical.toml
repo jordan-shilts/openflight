@@ -61,6 +61,7 @@ nav = [
     "using/index.md",
     "using/running.md",
     "using/display.md",
+    "using/phone.md",
     "using/swing-speed.md",
     "using/rig-setup.md",
     { "Simulator connectors" = [
