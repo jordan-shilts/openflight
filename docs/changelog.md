@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Status light.** `--status-led-gpio <BCM>` drives one LED on the case so the
+  golfer at the ball knows when to swing: solid when a swing now is measured,
+  blinking (2 Hz) while the last swing is still being measured, off while
+  starting or stopped, after a radar error, or when the radar did not re-arm.
+  It follows the OPS243 capture loop, also waits out the IWR6843 dump when
+  `--iwr6843` is on, and in `--mock` stays solid unless a swing recorder
+  reports its own state. Pins the build already uses are refused at startup;
+  without gpiozero the server warns once and runs without it. Suggested wiring
+  is BCM 23 (physical pin 16) through 330 Ω to the LED, LED to GND on physical
+  pin 25; see [Status light](build/status-light.md).
 - **Draw and fade from the D-plane.** A new `openflight.d_plane` module derives
   face angle, face-to-path, dynamic loft, spin loft and the spin axis from
   measured launch and trusted club delivery. The camera-fused club path (tier

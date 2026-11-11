@@ -44,6 +44,7 @@ nav = [
     ] },
     "build/inclinometer.md",
     "build/battery.md",
+    "build/status-light.md",
     "build/enclosure.md",
   ] },
 

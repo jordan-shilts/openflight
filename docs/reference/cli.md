@@ -135,6 +135,14 @@ Outbound connectors and battery status.
 | `--battery` | — | Show battery and external-power status using the selected provider (`geekworm`, or `mock` for a simulated battery) |
 | `--sim` | flag | Enable simulator connectors from config/sim.json (GSPro / OpenGolfSim / PAR-TEE). Off by default. |
 
+## Status light
+
+Optional front-panel LED. See [Status light](../build/status-light.md).
+
+| Flag | Type / default | Description |
+| --- | --- | --- |
+| `--status-led-gpio` | int (BCM); default none (no LED) | BCM GPIO driving a front-panel status LED: solid when ready for a swing, blinking (2 Hz) while the last swing is measured, off when not ready. Suggested: `23` (physical pin 16). Pins the build already uses are refused at startup: 0-3, 6, 14-17 and the `--iwr6843-trigger-pin` |
+
 ## High-speed camera capture
 
 Optional rolling-buffer capture and replay. See [camera setup](../camera/README.md).
