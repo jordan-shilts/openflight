@@ -105,7 +105,7 @@ A codec is a small class implementing the `Codec` protocol
 ```python
 class Codec(Protocol):
     name: str
-    def build_shot(self, resolved: ResolvedShot) -> bytes: ...      # serialize a shot
+    def build_shot(self, resolved: ResolvedShot, peer: str = "") -> bytes: ...  # serialize a shot
     def parse_inbound(self, frame: bytes) -> list[InboundEvent]: ... # decode sim → us
     def heartbeat_bytes(self) -> Optional[bytes]: ...                # None = no keepalive
     def on_connect_bytes(self) -> Optional[bytes]: ...               # e.g. a hello frame
@@ -123,6 +123,21 @@ errors the same way regardless of simulator.
 > carry/spin model. (If a future sim's API supports setting the club from the
 > device, the codec is where you'd add an outbound `build_club_change`-style
 > method — no other layer changes.)
+
+`peer` is the name the simulator gives itself, when it gives one (Open-Birdie
+adds a `Simulator` field to every reply; GSPro does not), so a codec can send
+an extension only to a simulator known to read it.
+
+**Open-Birdie is also told the club each shot was hit with.** A club changed
+on OpenFlight's own screen is not a club change the simulator hears about, so
+Open-Birdie would file the shot under whatever was selected there. Each shot
+sent to a simulator that names itself Open-Birdie therefore carries a
+`ClubName` field with the club's OpenConnect code (`DR`, `I7`, `PW`), the same
+codes the simulator uses toward OpenFlight; Open-Birdie records the shot under
+that club and moves its club dock to it. A shot with no known club carries no
+`ClubName`, and neither does a shot hit before any simulator has been seen
+since startup. GSPro, OpenGolfSim and PAR-TEE are sent exactly the payload the
+OpenConnect spec describes, byte for byte what they were sent before.
 
 ## Putts
 

@@ -1,6 +1,6 @@
 """Tests for gspro.state — GSPro club-code mapping."""
 from openflight.clubs import ClubType
-from openflight.gspro.state import _GSPRO_CLUB_MAP, gspro_code_to_club
+from openflight.gspro.state import _GSPRO_CLUB_MAP, club_to_gspro_code, gspro_code_to_club
 
 
 def test_gspro_code_to_club_mapping():
@@ -40,3 +40,13 @@ def test_all_openconnect_codes_from_ogs_clubsync_map_to_real_clubs():
     ]
     for code in codes:
         assert gspro_code_to_club(code) is not ClubType.UNKNOWN, code
+
+
+def test_club_to_gspro_code_is_the_inverse_of_the_code_map():
+    for code, club in _GSPRO_CLUB_MAP.items():
+        assert club_to_gspro_code(club) == code
+        assert gspro_code_to_club(club_to_gspro_code(club)) is club
+
+
+def test_an_unknown_club_has_no_gspro_code():
+    assert club_to_gspro_code(ClubType.UNKNOWN) is None

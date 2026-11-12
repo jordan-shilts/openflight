@@ -67,6 +67,7 @@ class ScriptedSim:
         self.greet = greet
         self.ack_heartbeats = ack_heartbeats
         self.shots = []  # (connection index, ShotNumber)
+        self.shot_messages = []  # every shot as it arrived, whole
         self.connections = 0
         self._listener = socket.socket()
         self._listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -130,6 +131,7 @@ class ScriptedSim:
                         self._reply(sock, {"Code": 200, "Message": "Heartbeat OK"})
                     continue
                 self.shots.append((index, msg["ShotNumber"]))
+                self.shot_messages.append(msg)
                 if self.ack_on(index):
                     self._reply(sock, {"Code": 200, "Message": "Shot received successfully"})
 
@@ -326,3 +328,93 @@ def test_stop_wakes_a_long_backoff_promptly():
     started = time.time()
     client.stop()
     assert time.time() - started < 1.5
+
+
+# --- the club a shot was hit with, for a simulator that reads it -----------
+
+
+def _connector(port, **kw):
+    from openflight.sim import build_connector
+    from openflight.sim.config import ConnectorConfig
+
+    cfg = ConnectorConfig(
+        type="gspro", enabled=True, host="127.0.0.1", port=port, heartbeat_interval_s=60
+    )
+    return build_connector(cfg, backoff_seconds=(0.05, 0.1, 0.2), **kw)
+
+
+def _iron_shot(n=7) -> ResolvedShot:
+    resolved = _resolved(n)
+    resolved.club = ClubType.IRON_7
+    return resolved
+
+
+def test_open_birdie_is_told_the_club_the_shot_was_hit_with(fast_timeouts):
+    """A club changed on OpenFlight's screen is the club Open-Birdie files the shot under."""
+    sim = ScriptedSim(name="Open-Birdie")
+    connector = _connector(sim.port)
+    connector.start()
+    try:
+        assert _until(lambda: connector.peer == "Open-Birdie")
+        assert connector.deliver_shot(_iron_shot())
+        assert _until(lambda: len(sim.shot_messages) == 1)
+        assert sim.shot_messages[0]["ClubName"] == "I7"
+    finally:
+        connector.stop()
+        sim.stop()
+
+
+@pytest.mark.parametrize("name", ["", "GSPro", "OpenGolfSim"])
+def test_a_simulator_that_is_not_open_birdie_is_sent_no_club_name(fast_timeouts, name):
+    sim = ScriptedSim(name=name)
+    connector = _connector(sim.port)
+    connector.start()
+    try:
+        assert _until(connector.is_connected)
+        assert _until(lambda: connector.peer == name)
+        time.sleep(0.1)  # the greeting, if any, has been read
+        assert connector.deliver_shot(_iron_shot())
+        assert _until(lambda: len(sim.shot_messages) == 1)
+        assert "ClubName" not in sim.shot_messages[0]
+    finally:
+        connector.stop()
+        sim.stop()
+
+
+def test_a_shot_held_through_a_dropped_link_still_names_its_club(fast_timeouts):
+    """The shot is built when it is hit, for the simulator last seen on this link."""
+    sim = ScriptedSim(name="Open-Birdie")
+    port = sim.port
+    connector = _connector(port)
+    connector.start()
+    replacement = None
+    try:
+        assert _until(lambda: connector.peer == "Open-Birdie")
+        sim.stop()  # the simulator's machine left the network
+        assert _until(lambda: not connector.is_connected())
+        assert not connector.deliver_shot(_iron_shot())
+        replacement = ScriptedSim(port=port, name="Open-Birdie")
+        assert _until(lambda: len(replacement.shot_messages) == 1)
+        assert replacement.shot_messages[0]["ClubName"] == "I7"
+    finally:
+        connector.stop()
+        if replacement:
+            replacement.stop()
+
+
+def test_a_shot_hit_before_any_simulator_was_seen_carries_no_club_name(fast_timeouts):
+    """Nobody has named themselves yet: send what every simulator understands."""
+    port = _free_port()
+    connector = _connector(port)
+    connector.start()
+    sim = None
+    try:
+        time.sleep(0.2)
+        assert not connector.deliver_shot(_iron_shot())
+        sim = ScriptedSim(port=port, name="Open-Birdie")
+        assert _until(lambda: len(sim.shot_messages) == 1)
+        assert "ClubName" not in sim.shot_messages[0]
+    finally:
+        connector.stop()
+        if sim:
+            sim.stop()

@@ -49,6 +49,11 @@ class ShotPayload:
     BallData: BallData = field(default_factory=BallData)
     ClubData: ClubData = field(default_factory=ClubData)
     ShotDataOptions: ShotDataOptions = field(default_factory=ShotDataOptions)
+    # Not part of the GSPro spec: the club the shot was hit with, as a GSPro club
+    # code ("DR", "I7"). Set only for a simulator known to read it (Open-Birdie);
+    # left None it is not serialized at all, so every other simulator receives
+    # exactly the spec's payload.
+    ClubName: Optional[str] = None
 
 
 @dataclass
@@ -63,7 +68,10 @@ class GSProResponse:
 
 
 def serialize_payload(payload: ShotPayload) -> bytes:
-    return json.dumps(asdict(payload), separators=(",", ":")).encode("utf-8")
+    data = asdict(payload)
+    if data["ClubName"] is None:
+        del data["ClubName"]
+    return json.dumps(data, separators=(",", ":")).encode("utf-8")
 
 
 def build_heartbeat(device_id: str, units: str, shot_number: int) -> bytes:

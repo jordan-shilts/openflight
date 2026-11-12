@@ -16,7 +16,7 @@ from openflight.gspro.messages import (
     parse_response,
     serialize_payload,
 )
-from openflight.gspro.state import gspro_code_to_club
+from openflight.gspro.state import club_to_gspro_code, gspro_code_to_club
 from openflight.sim.types import (
     InboundEvent,
     PeerInfo,
@@ -42,6 +42,13 @@ _GSPRO_FIELDS = [
 ]
 
 
+# Simulators, by the name they give themselves, that read the club a shot was hit
+# with from a ClubName field. OpenConnect itself has no such field (the simulator
+# tells the launch monitor the club, never the reverse), so it is sent only to a
+# simulator known to read it, and nobody else's payload changes.
+CLUB_NAME_PEERS = frozenset({"Open-Birdie"})
+
+
 class GSProCodec:
     """OpenConnect V1 wire format (used by GSPro and by OpenGolfSim's
     OpenConnect plugin, and by PAR-TEE). ``name`` is the connector/display
@@ -56,7 +63,14 @@ class GSProCodec:
         self.device_id = device_id
         self.units = units
 
-    def build_shot(self, resolved: ResolvedShot) -> bytes:
+    def build_shot(self, resolved: ResolvedShot, peer: str = "") -> bytes:
+        """Serialize a shot. ``peer`` is the simulator's own name, "" if it gave none.
+
+        A simulator in CLUB_NAME_PEERS is also told the club the shot was hit
+        with, so a club changed on OpenFlight's screen is the club it records
+        the shot under. An unknown club is never named: the simulator keeps
+        the club it had selected.
+        """
         has_club_speed = resolved.club_speed_mph is not None
         has_attack = resolved.attack_angle_deg is not None
         payload = ShotPayload(
@@ -86,6 +100,7 @@ class GSProCodec:
                 LaunchMonitorBallDetected=True,
                 IsHeartBeat=False,
             ),
+            ClubName=club_to_gspro_code(resolved.club) if peer in CLUB_NAME_PEERS else None,
         )
         return serialize_payload(payload)
 

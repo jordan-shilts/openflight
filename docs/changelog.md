@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Open-Birdie is told the club each shot was hit with.** A club changed on
+  OpenFlight's own screen never reached the simulator (OpenConnect only carries
+  club changes from the simulator to the launch monitor), so Open-Birdie filed
+  the shot under whatever club was selected there, or not at all. A shot sent
+  to a simulator that names itself Open-Birdie now carries a `ClubName` field
+  with the club's OpenConnect code (`DR`, `I7`, `PW`). GSPro, OpenGolfSim and
+  PAR-TEE receive byte-for-byte the payload they did before. See
+  [Simulator integration](using/simulator/index.md).
 - **Shot latency tools.** Three scripts in `scripts/analysis/` show where the
   time between impact and the screen goes, without changing anything on the
   rig. `bench_shot_pipeline.py` times every CPU stage of a shot and the fixed

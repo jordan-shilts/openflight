@@ -76,9 +76,15 @@ class SimConnector:
         """The simulator's own name if it reported one (e.g. "Open-Birdie"), else ""."""
         return self._client.peer
 
+    def _shot_bytes(self, resolved: ResolvedShot) -> bytes:
+        # Built for the simulator last seen on this link: it names itself on
+        # every connection, and a shot held through a dropped link is almost
+        # always delivered to the same one.
+        return self.codec.build_shot(resolved, peer=self.peer)
+
     def send_shot(self, resolved: ResolvedShot) -> None:
         """Serialize and send a resolved shot. Raises OSError if the socket fails."""
-        self._client.send_raw(self.codec.build_shot(resolved))
+        self._client.send_raw(self._shot_bytes(resolved))
 
     def deliver_shot(self, resolved: ResolvedShot, on_delivered=None) -> bool:
         """Send a shot, or hold it through a dropped link or network switch.
@@ -86,7 +92,7 @@ class SimConnector:
         Never raises. True when it went out now; False when it is waiting for
         the connection (it is sent, and ``on_delivered`` called, once it does).
         """
-        return self._client.deliver(self.codec.build_shot(resolved), on_delivered=on_delivered)
+        return self._client.deliver(self._shot_bytes(resolved), on_delivered=on_delivered)
 
 
 def _codec_for(cfg: "ConnectorConfig") -> Codec:

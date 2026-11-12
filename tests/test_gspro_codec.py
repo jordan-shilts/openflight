@@ -1,8 +1,11 @@
 """Tests for gspro.codec — OpenConnectV1 wire serialization + inbound parsing."""
 import json
 
+import pytest
+
 from openflight.clubs import ClubType
-from openflight.gspro.codec import GSProCodec
+from openflight.gspro.codec import CLUB_NAME_PEERS, GSProCodec
+from openflight.gspro.state import gspro_code_to_club
 from openflight.sim.types import PlayerUpdate, ResolvedShot, ShotAck, SimError
 
 
@@ -18,8 +21,8 @@ def _resolved(**kw) -> ResolvedShot:
     return ResolvedShot(**base)
 
 
-def _build(codec, resolved) -> dict:
-    return json.loads(codec.build_shot(resolved).decode("utf-8"))
+def _build(codec, resolved, **kw) -> dict:
+    return json.loads(codec.build_shot(resolved, **kw).decode("utf-8"))
 
 
 def test_build_shot_full_payload():
@@ -144,3 +147,71 @@ def test_parse_inbound_reports_a_named_peer_before_the_event():
     assert [type(e).__name__ for e in player] == ["PeerInfo", "PlayerUpdate"]
     plain = GSProCodec().parse_inbound(json.dumps({"Code": 200, "Message": "ok"}).encode())
     assert not any(isinstance(e, PeerInfo) for e in plain), "real GSPro: no peer name"
+
+
+# --- the club a shot was hit with (ClubName), for a simulator that reads it ---
+#
+# OpenConnect has no field for it: the simulator tells the launch monitor the
+# club, never the other way. Open-Birdie reads ClubName as an extension, so a
+# club changed on OpenFlight's own screen is the club its bag files the shot
+# under. Nothing else is sent it.
+
+SELECTABLE_CLUBS = [club for club in ClubType if club is not ClubType.UNKNOWN]
+
+
+def test_open_birdie_is_the_only_simulator_sent_the_club_name():
+    assert CLUB_NAME_PEERS == frozenset({"Open-Birdie"})
+
+
+def test_a_shot_for_open_birdie_names_its_club_in_the_open_connect_code():
+    p = _build(GSProCodec(), _resolved(club=ClubType.IRON_7), peer="Open-Birdie")
+    assert p["ClubName"] == "I7"
+
+
+@pytest.mark.parametrize("club", SELECTABLE_CLUBS, ids=lambda club: club.value)
+def test_every_club_is_named_in_the_code_the_simulator_would_send_back(club):
+    """One vocabulary both ways: the code we send reads back as the same club."""
+    p = _build(GSProCodec(), _resolved(club=club), peer="Open-Birdie")
+    assert gspro_code_to_club(p["ClubName"]) is club
+
+
+def test_an_unknown_club_is_not_named_so_the_simulator_keeps_its_own_pick():
+    p = _build(GSProCodec(), _resolved(club=ClubType.UNKNOWN), peer="Open-Birdie")
+    assert "ClubName" not in p
+
+
+@pytest.mark.parametrize("peer", ["", "GSPro", "OpenGolfSim", "PAR-TEE", "open-birdie", "Open-Birdie 2"])
+def test_no_other_simulator_is_sent_a_club_name(peer):
+    p = _build(GSProCodec(), _resolved(club=ClubType.IRON_7), peer=peer)
+    assert "ClubName" not in p
+
+
+def test_a_shot_for_any_other_simulator_is_the_same_bytes_as_before():
+    """GSPro, OpenGolfSim and PAR-TEE must see no difference at all."""
+    codec = GSProCodec()
+    resolved = _resolved(club=ClubType.IRON_7)
+    expected = (
+        b'{"DeviceID":"OpenFlight","Units":"Yards","ShotNumber":1,"APIversion":"1",'
+        b'"BallData":{"Speed":140.0,"SpinAxis":-3.0,"TotalSpin":2500.0,"BackSpin":2497.0,'
+        b'"SideSpin":-131.0,"HLA":1.5,"VLA":12.0,"CarryDistance":255.0},'
+        b'"ClubData":{"Speed":110.0,"AngleOfAttack":0.0,"FaceToTarget":0.0,"Lie":0.0,"Loft":0.0,'
+        b'"Path":0.5,"SpeedAtImpact":0.0,"VerticalFaceImpact":0.0,"HorizontalFaceImpact":0.0,'
+        b'"ClosureRate":0.0},'
+        b'"ShotDataOptions":{"ContainsBallData":true,"ContainsClubData":true,'
+        b'"LaunchMonitorIsReady":true,"LaunchMonitorBallDetected":true,"IsHeartBeat":false}}'
+    )
+    assert codec.build_shot(resolved) == expected
+    assert codec.build_shot(resolved, peer="GSPro") == expected
+
+
+def test_the_club_name_is_the_only_difference_for_open_birdie():
+    codec = GSProCodec()
+    resolved = _resolved(club=ClubType.IRON_7)
+    plain = json.loads(codec.build_shot(resolved))
+    named = json.loads(codec.build_shot(resolved, peer="Open-Birdie"))
+    assert named.pop("ClubName") == "I7"
+    assert named == plain
+
+
+def test_a_heartbeat_never_carries_a_club_name():
+    assert "ClubName" not in json.loads(GSProCodec().heartbeat_bytes())

@@ -1,6 +1,7 @@
 """GSPro club-code mapping. (Connection/player state now lives in sim.types.)"""
 
 import logging
+from typing import Optional
 
 from openflight.clubs import ClubType
 
@@ -29,6 +30,14 @@ _GSPRO_CLUB_MAP = {
     "LW": ClubType.LW,
     "PT": ClubType.PUTTER,
 }
+
+
+_CLUB_TO_GSPRO_CODE = {club: code for code, club in _GSPRO_CLUB_MAP.items()}
+
+
+def club_to_gspro_code(club: ClubType) -> Optional[str]:
+    """The GSPro club code for a ClubType (e.g. 'DR', 'I7'). UNKNOWN -> None."""
+    return _CLUB_TO_GSPRO_CODE.get(club)
 
 
 def gspro_code_to_club(code: str) -> ClubType:
