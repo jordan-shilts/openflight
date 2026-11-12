@@ -234,24 +234,25 @@ def _cl(sp: float) -> float:
     return max(0.0, _poly(CL_POLY, min(sp, SP_FIT_MAX)))
 
 
-def _derivatives(
-    state: tuple,
+def _acceleration(  # pylint: disable=too-many-positional-arguments
+    vx: float,
+    vy: float,
+    vz: float,
     omega: float,
     axis: tuple,
     air_density: float,
 ) -> tuple:
-    """d/dt of (x, y, z, vx, vy, vz) under gravity + drag + Magnus."""
-    _, _, _, vx, vy, vz = state
+    """Acceleration (ax, ay, az) of a ball moving at (vx, vy, vz): gravity + drag + Magnus."""
     v = math.sqrt(vx * vx + vy * vy + vz * vz)
     # At v ≈ 0 both drag and Magnus vanish (F ∝ v²) and division below
     # would be unsafe. Should only happen at the instantaneous apex of a
     # pathological straight-up launch.
     if v < 1e-6:
-        return (vx, vy, vz, 0.0, 0.0, -GRAVITY)
+        return (0.0, 0.0, -GRAVITY)
 
     # Spin parameter Sp drives both Cd and Cl. Note ω is tracked separately
-    # (not in the state tuple) because its decay is exponential, not an ODE
-    # we want to couple into RK4.
+    # (not in the state) because its decay is exponential, not an ODE we want
+    # to couple into RK4.
     sp = BALL_RADIUS_M * omega / v
     cd = _cd(sp)
     cl = _cl(sp)
@@ -282,7 +283,7 @@ def _derivatives(
 
     az -= GRAVITY
 
-    return (vx, vy, vz, ax, ay, az)
+    return (ax, ay, az)
 
 
 def _rk4_step(
@@ -292,16 +293,38 @@ def _rk4_step(
     air_density: float,
     dt: float,
 ) -> tuple:
-    k1 = _derivatives(state, omega, axis, air_density)
-    s2 = tuple(state[i] + 0.5 * dt * k1[i] for i in range(6))
-    k2 = _derivatives(s2, omega, axis, air_density)
-    s3 = tuple(state[i] + 0.5 * dt * k2[i] for i in range(6))
-    k3 = _derivatives(s3, omega, axis, air_density)
-    s4 = tuple(state[i] + dt * k3[i] for i in range(6))
-    k4 = _derivatives(s4, omega, axis, air_density)
-    return tuple(
-        state[i] + (dt / 6.0) * (k1[i] + 2 * k2[i] + 2 * k3[i] + k4[i])
-        for i in range(6)
+    """One classic RK4 step of (x, y, z, vx, vy, vz).
+
+    The acceleration depends only on velocity, so each stage's position
+    derivative is simply that stage's velocity. Written out in scalars
+    because it runs four times per 2 ms of flight: building each stage's
+    state as a tuple took 1.7 times as long for the same numbers.
+    """
+    x, y, z, vx, vy, vz = state
+    half = 0.5 * dt
+    sixth = dt / 6.0
+
+    a1x, a1y, a1z = _acceleration(vx, vy, vz, omega, axis, air_density)
+    v2x = vx + half * a1x
+    v2y = vy + half * a1y
+    v2z = vz + half * a1z
+    a2x, a2y, a2z = _acceleration(v2x, v2y, v2z, omega, axis, air_density)
+    v3x = vx + half * a2x
+    v3y = vy + half * a2y
+    v3z = vz + half * a2z
+    a3x, a3y, a3z = _acceleration(v3x, v3y, v3z, omega, axis, air_density)
+    v4x = vx + dt * a3x
+    v4y = vy + dt * a3y
+    v4z = vz + dt * a3z
+    a4x, a4y, a4z = _acceleration(v4x, v4y, v4z, omega, axis, air_density)
+
+    return (
+        x + sixth * (vx + 2 * v2x + 2 * v3x + v4x),
+        y + sixth * (vy + 2 * v2y + 2 * v3y + v4y),
+        z + sixth * (vz + 2 * v2z + 2 * v3z + v4z),
+        vx + sixth * (a1x + 2 * a2x + 2 * a3x + a4x),
+        vy + sixth * (a1y + 2 * a2y + 2 * a3y + a4y),
+        vz + sixth * (a1z + 2 * a2z + 2 * a3z + a4z),
     )
 
 

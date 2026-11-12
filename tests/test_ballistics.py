@@ -227,6 +227,76 @@ class TestSimulate:
         assert traj.total_yards > traj.carry_yards
 
 
+class TestSimulatePinnedFlights:
+    """The integrator's numbers, pinned.
+
+    The carry a player sees here is also where Open-Birdie lands the ball (it
+    runs the same model), so a change to the integration, however small, must
+    be deliberate. These are the values of the integrator as validated against
+    TrackMan; a rewrite for speed has to reproduce them. The tolerance only
+    allows for a different maths library rounding the last bit of sin/cos/exp.
+    """
+
+    # (ball mph, launch v, launch h, spin rpm, spin axis) ->
+    # (carry yd, apex yd, lateral yd, flight s, landing mph, landing deg, points)
+    PINNED = [
+        (
+            (160.0, 11.0, 1.5, 2600.0, -3.0),
+            (263.99891499638426, 29.8287567097469, 1.6074940182603208, 6.4903674984295,
+             64.44735892058533, 35.79965985997152, 128),
+        ),
+        (
+            (120.0, 17.0, -2.0, 6800.0, 4.0),
+            (164.51798157911904, 31.885869504291914, -0.375043242290543, 6.1063763173840915,
+             53.95777753922705, 46.52947739743344, 120),
+        ),
+        (
+            (85.0, 27.0, 0.0, 9500.0, 0.0),
+            (106.37924891092284, 22.26820527452854, 0.0, 4.692899108160879,
+             50.542351649543804, 44.9364521319656, 93),
+        ),
+        (
+            (60.0, 33.0, 4.0, 11000.0, 8.0),
+            (63.80638790885454, 13.26965615930747, 6.388189562498666, 3.4534651131316196,
+             43.76325913670549, 42.33531077080162, 69),
+        ),
+        (
+            (185.0, 9.0, 0.0, 2100.0, -25.0),
+            (296.49442234254855, 27.3035442063458, -47.274767708474414, 6.253089209538203,
+             70.86231516857613, 30.540618684088017, 123),
+        ),
+        (
+            (35.0, 2.0, 0.0, 0.0, 0.0),
+            (1.898108735926361, 0.016595166560481777, 0.0, 0.11123666328711372,
+             34.84913956834269, 2.0054612902933866, 4),
+        ),
+    ]
+
+    @pytest.mark.parametrize("launch, expected", PINNED)
+    def test_flight_matches_the_pinned_numbers(self, launch, expected):
+        traj = simulate(LaunchConditions(*launch, spin_source="measured"))
+        carry, apex, lateral, flight_s, landing_mph, landing_deg, points = expected
+        tight = dict(rel=1e-9, abs=1e-9)
+        assert traj.carry_yards == pytest.approx(carry, **tight)
+        assert traj.apex_yards == pytest.approx(apex, **tight)
+        assert traj.lateral_yards == pytest.approx(lateral, **tight)
+        assert traj.flight_time_s == pytest.approx(flight_s, **tight)
+        assert traj.landing_speed_mph == pytest.approx(landing_mph, **tight)
+        assert traj.landing_angle_deg == pytest.approx(landing_deg, **tight)
+        assert len(traj.points) == points
+
+    def test_thinner_air_carries_a_drive_farther(self):
+        launch = LaunchConditions(160.0, 11.0, 0.0, 2600.0, 0.0, spin_source="measured")
+        assert simulate(launch, air_density=1.05).carry_yards > simulate(launch).carry_yards
+
+    def test_a_ball_with_no_speed_falls_straight_down(self):
+        # v = 0 at the first step: the drag and lift terms must not divide by it.
+        launch = LaunchConditions(0.0, 45.0, 0.0, 3000.0, 0.0, spin_source="measured")
+        traj = simulate(launch)
+        assert traj.carry_yards == pytest.approx(0.0, abs=1e-9)
+        assert math.isfinite(traj.flight_time_s)
+
+
 class TestDisplayTrajectory:
     """The compact side-view payload the UI draws for each shot."""
 
