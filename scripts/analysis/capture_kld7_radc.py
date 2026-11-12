@@ -213,12 +213,15 @@ class OPS243RollingBufferReader:
         while self._running:
             try:
                 # SoundTrigger.wait_for_trigger handles:
-                #   wait_for_hardware_trigger → rearm → parse → validate
+                #   wait_for_hardware_trigger → parse → validate → clock sync
+                # and leaves the re-arm of an accepted capture to
+                # finish_capture. Nothing is published here, so re-arm at once.
                 capture = self.trigger.wait_for_trigger(
                     radar=self.radar,
                     processor=self.processor,
                     timeout=3.0,  # Short so we can check _running flag
                 )
+                self.trigger.finish_capture(self.radar)
                 self.trigger.reset()
 
                 if capture is None:

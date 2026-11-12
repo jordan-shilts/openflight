@@ -58,8 +58,8 @@ def test_report_times_every_stage_of_a_shot():
 
     stages = report["stages"]
     for prefix in (
-        "radar: clock sync",
-        "radar: re-arm",
+        bench.CLOCK_SYNC_STAGE,
+        bench.REARM_STAGE,
         "parse",
         "process",
         "capture",
@@ -73,7 +73,10 @@ def test_report_times_every_stage_of_a_shot():
     assert report["captures"] == "synthetic captures"
     assert report["cpu_per_driver_shot_ms"] > 0
     # the re-arm alone sleeps for more than half a second
-    assert report["radar_waits_per_shot_ms"] > 500
+    # only the clock sync stands between the dump and the shot
+    assert report["wait_before_shot_ms"] == stages[bench.CLOCK_SYNC_STAGE]["median_ms"]
+    assert 300 < report["wait_before_shot_ms"] < 500
+    assert report["rearm_after_shot_ms"] > 500
 
 
 def test_radar_waits_cover_both_clock_kinds():
@@ -82,4 +85,9 @@ def test_radar_waits_cover_both_clock_kinds():
     integer = bench.time_radar_waits(1, fractional_clock=False)
 
     assert set(fractional) == set(integer)
-    assert fractional["radar: re-arm (fixed waits)"]["median_ms"] > 500
+    assert fractional[bench.REARM_STAGE]["median_ms"] > 500
+    # a whole-second clock is read until it rolls over: never quicker than a fractional one
+    assert (
+        integer[bench.CLOCK_SYNC_STAGE]["median_ms"]
+        >= fractional[bench.CLOCK_SYNC_STAGE]["median_ms"] - 5.0
+    )

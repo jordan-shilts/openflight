@@ -8,7 +8,8 @@ over UART at 230,400 baud, the IWR6843 dump several seconds more). This script
 measures everything the Pi's CPU adds on top, so the same numbers can be taken
 on a dev machine and on the Pi and compared stage for stage:
 
-    radar      clock sync + re-arm            (fixed waits after the dump, before processing)
+    radar      clock sync, then re-arm        (fixed waits: the sync before a shot is
+                                              processed, the re-arm after it is published)
     parse      wire text of a dump            -> IQCapture
     process    IQCapture                      -> speeds, spin, impact
     capture    raw I/Q into the session log   (written before the shot is published)
@@ -130,6 +131,13 @@ def wire_text(i_samples: list[int], q_samples: list[int]) -> str:
     )
 
 
+# The two fixed waits around the radar's serial port. The clock sync runs before a
+# capture is processed, so it is part of the time to a shot's first numbers; the
+# re-arm runs after the shot is published, so it only delays the next swing.
+CLOCK_SYNC_STAGE = "radar: clock sync, before the shot"
+REARM_STAGE = "radar: re-arm, after the shot"
+
+
 class InstantRadarSerial:
     """A serial port whose radar answers at once.
 
@@ -189,8 +197,8 @@ def time_radar_waits(repeat: int, fractional_clock: bool = True) -> dict:
         }
 
     return {
-        "radar: clock sync (fixed waits)": stage(timings["sync"]),
-        "radar: re-arm (fixed waits)": stage(timings["rearm"]),
+        CLOCK_SYNC_STAGE: stage(timings["sync"]),
+        REARM_STAGE: stage(timings["rearm"]),
     }
 
 
@@ -317,7 +325,6 @@ def run(paths: list[str], repeat: int) -> dict:
         + total("ui")
         + total("sim")
     )
-    radar_waits = total("radar")
     return {
         "machine": {
             "platform": platform.platform(),
@@ -328,7 +335,8 @@ def run(paths: list[str], repeat: int) -> dict:
         "captures": source,
         "stages": stages,
         "cpu_per_driver_shot_ms": round(per_shot, 2),
-        "radar_waits_per_shot_ms": round(radar_waits, 2),
+        "wait_before_shot_ms": stages[CLOCK_SYNC_STAGE]["median_ms"],
+        "rearm_after_shot_ms": stages[REARM_STAGE]["median_ms"],
     }
 
 
@@ -352,7 +360,8 @@ def main() -> int:
             f"{name:<42}{timing['median_ms']:>8.2f} ms{timing['p95_ms']:>8.2f} ms"
             f"{timing['max_ms']:>8.2f} ms"
         )
-    print(f"\nFixed waits after the dump, every shot:  {report['radar_waits_per_shot_ms']:.0f} ms")
+    print(f"\nFixed wait before a shot is processed:    {report['wait_before_shot_ms']:.0f} ms")
+    print(f"Re-arm, after the shot is published:      {report['rearm_after_shot_ms']:.0f} ms")
     print(f"CPU added to one driver shot (medians):   {report['cpu_per_driver_shot_ms']:.1f} ms")
     if args.json:
         Path(args.json).write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

@@ -89,15 +89,16 @@ at runtime, so the mode has to already be in flash at power-on.
 | Dump time at 230,400 baud | ~1.8 s |
 | Dump time at 19,200 baud (factory default) | ~21 s — every capture truncated |
 | Clock sync after the dump | 0.36 s of fixed waits (longer on whole-second clock firmware) |
-| Re-arm after the dump | 0.55 s of fixed waits |
+| Re-arm after the shot is published | 0.55 s of fixed waits |
 
 The baud rate is why the [UART migration](../build/ops243-uart.md) negotiates up
 to 230,400 rather than accepting the factory default.
 
-The clock sync and the re-arm run before the capture is processed, so a shot's
-first numbers appear about 0.9 s after its dump has finished arriving, plus the
-processing itself. [Shot latency](../development/performance.md) breaks the
-whole path down and shows how to measure it on a rig.
+The clock sync runs before the capture is processed, so a shot's first numbers
+appear about 0.4 s after its dump has finished arriving, plus the processing
+itself. The radar is re-armed after the shot has gone out.
+[Shot latency](../development/performance.md) breaks the whole path down and
+shows how to measure it on a rig.
 
 ## Related
 

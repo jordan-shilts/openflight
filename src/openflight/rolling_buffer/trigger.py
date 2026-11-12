@@ -160,6 +160,15 @@ class TriggerStrategy(ABC):
         """
         pass
 
+    def finish_capture(self, radar: "OPS243Radar") -> None:
+        """Do the radar work a strategy leaves until its capture has been handled.
+
+        The monitor calls this once for every capture ``wait_for_trigger``
+        returned, after the shot has been processed and published (or come to
+        nothing), as the last thing before it waits again. The default is
+        nothing: only a strategy that defers work overrides it.
+        """
+
     @abstractmethod
     def reset(self):
         """Reset trigger state for next capture."""
@@ -357,6 +366,9 @@ class SoundTrigger(TriggerStrategy):
                 The trigger does NOT configure rolling buffer mode itself.
         """
         super().__init__(pre_trigger_segments=pre_trigger_segments)
+        # True from the moment an accepted capture is handed back until the
+        # radar has been re-armed for the next one (finish_capture).
+        self._rearm_owed = False
 
     @staticmethod
     def _clock_sync_last_read_host_time(clock_sync: dict) -> Optional[float]:
@@ -576,6 +588,14 @@ class SoundTrigger(TriggerStrategy):
         output, causing the radar to dump its rolling buffer automatically.
         We just block on serial read waiting for the I/Q data to arrive.
         """
+        if self._rearm_owed:
+            # The last capture was never finished, so the radar is still idle
+            # and would never dump again. Re-arm before waiting on it.
+            logger.warning(
+                "[TRIGGER] Previous capture was not finished; re-arming the radar before waiting"
+            )
+            self.finish_capture(radar)
+
         logger.info("[TRIGGER] Waiting for sound trigger (timeout=%.0fs)...", timeout)
 
         response = radar.wait_for_hardware_trigger(
@@ -604,6 +624,13 @@ class SoundTrigger(TriggerStrategy):
         # field (capture thread wedged in serial.write, radar frozen
         # mid-dump). So: do all wire-talk (clock sync) while idle, and
         # re-arm LAST, when we are about to go back to reading.
+        #
+        # For an accepted capture "last" is finish_capture: the re-arm is
+        # over half a second of fixed waits, and the radar is just as idle
+        # while the shot is processed and published as it is here. The shot
+        # goes out first; the monitor then finishes the capture and waits
+        # again. Dumps rejected below have nothing to publish and re-arm at
+        # once.
 
         capture = processor.parse_capture(
             response,
@@ -648,10 +675,11 @@ class SoundTrigger(TriggerStrategy):
             )
             return None
 
-        # Accepted: talk on the wire while the radar is still idle, then
-        # re-arm as the last serial action before returning to the reader.
+        # Accepted: talk on the wire while the radar is still idle. The
+        # re-arm is owed from here and paid in finish_capture, once the shot
+        # is out and as the last serial action before the next wait.
         self._select_clock_sync_for_capture(radar, capture)
-        radar.rearm_rolling_buffer(self.pre_trigger_segments)
+        self._rearm_owed = True
 
         if capture.first_byte_timestamp is not None and capture.trigger_timestamp is None:
             capture.apply_trigger_timestamp_from_first_byte()
@@ -680,9 +708,22 @@ class SoundTrigger(TriggerStrategy):
 
         return capture
 
+    def finish_capture(self, radar: "OPS243Radar") -> None:
+        """Re-arm the radar after an accepted capture has been handled.
+
+        Nothing to do unless a re-arm is owed: after a timeout the radar is
+        still armed, and after a rejected dump it was re-armed in the wait.
+        The debt is cleared only once the re-arm has gone through, so one
+        that raises is tried again before the next wait.
+        """
+        if not self._rearm_owed:
+            return
+        radar.rearm_rolling_buffer(self.pre_trigger_segments)
+        self._rearm_owed = False
+
     def reset(self):
         """Reset trigger state."""
-        pass  # No state to reset
+        pass  # Nothing to reset: an owed re-arm is paid by finish_capture, not dropped here
 
 
 class HardwareTriggeredCapture(TriggerStrategy):

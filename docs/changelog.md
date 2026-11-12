@@ -49,6 +49,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [Security and scope](ios-ble.md#security-and-scope).
 
 ### Changed
+- **A shot's first numbers arrive about half a second sooner.** After its dump
+  the OPS243 has to be re-armed, which is 0.55 s of fixed waits (a quiet line,
+  then `PA`, `S#n`, `PA`). That ran before the capture was processed, so every
+  shot waited for it. The sound trigger now hands the capture back as soon as
+  the clock sync is done, the shot is processed and published, and the radar
+  is re-armed after it (`SoundTrigger.finish_capture`), still as the last
+  thing done on the serial port before the next wait and still after the clock
+  sync. The radar is re-armed exactly once after every capture, whether it
+  became a shot, was too slow, failed in processing, or the shot hand-off
+  raised; a re-arm that fails is tried again before the next wait. Dumps
+  rejected inside the wait re-arm at once, as before. The internal-speed and
+  speed triggers are unchanged. **Tested against a scripted radar only; not
+  yet run on an OPS243.** See [Shot latency](development/performance.md).
 - **Carry simulation runs 1.7 times as fast.** The flight integrator steps in
   plain numbers instead of building a tuple per stage (it runs four times per
   2 ms of ball flight, about 13,000 times for a drive). Measured on a cloud

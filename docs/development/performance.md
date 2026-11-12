@@ -19,20 +19,35 @@ serial port.
 | Sound trigger to the OPS243 | ~10 µs | Hardware (`GATE` to `HOST_INT`) |
 | OPS243 buffer dump | ~1.8 s | 40,556 bytes at 230,400 baud |
 | Clock sync with the OPS243 | 0.36 s, or up to ~1.6 s | Fixed waits: 36 reads 10 ms apart. Firmware that reports its clock in whole seconds is read until the second rolls over |
-| Re-arming the OPS243 | 0.55 s | Fixed waits: 0.2 s of quiet line, then `PA`, `S#n`, `PA` |
 | Processing the capture | tens of ms | CPU: FFT timeline, spin, impact |
 | Carry and trajectory | ~15 ms | CPU: the [ballistic simulator](../how-it-works/ballistics.md) |
 | Sending to a simulator | ~1 ms | Network |
+| Re-arming the OPS243, after the shot is out | 0.55 s | Fixed waits: 0.2 s of quiet line, then `PA`, `S#n`, `PA` |
 | IWR6843 dump, alongside all of the above | several seconds | UART; see [the IWR6843 pages](../iwr6843/index.md) |
 | IWR6843 launch angle (LCMF-v1) | ~0.4 s | CPU |
 
-The clock sync and the re-arm both run after the last byte of the dump has
-arrived and **before the capture is processed**, so their waits are part of
-the time to the first numbers on every shot: at least 0.9 s on top of the
-1.8 s dump. They are ordered that way on purpose. The radar sits idle after
-its dump, which is the only safe time to talk to it, and it must be re-armed
-as the last thing done on the serial port before going back to reading
-(see `SoundTrigger.wait_for_trigger` in `rolling_buffer/trigger.py`).
+The clock sync runs after the last byte of the dump has arrived and **before
+the capture is processed**, so its wait is part of the time to the first
+numbers on every shot: at least 0.36 s on top of the 1.8 s dump. It has to be
+there: it dates the impact, which the second radar's frames are matched on,
+and the radar can only be talked to while it sits idle after its dump.
+
+The re-arm used to run there too, another 0.55 s before a shot's first
+numbers. It now follows the shot: the capture is processed and published, and
+the radar is re-armed as the last thing done on the serial port before the
+monitor goes back to reading (`SoundTrigger.finish_capture` in
+`rolling_buffer/trigger.py`). The radar is as idle while the shot goes out as
+it was during the clock sync, and the next swing is seconds away.
+
+!!! warning "Not yet confirmed on hardware"
+
+    The new order is covered by tests against a scripted radar: the shot is
+    published before the re-arm, and the radar is re-armed exactly once after
+    every capture, whatever becomes of it. It has not been run on an OPS243.
+    Before relying on it, hit a dozen shots and check that every one is
+    caught, that `[OPS] Rolling buffer re-armed` follows each `[SHOT]` line in
+    the log, and that `shot_latency_report.py` shows "after the dump" about
+    half a second shorter than before.
 
 With an IWR6843 fitted, the UI shows the OPS243 numbers first and fills in the
 launch angle when the second radar's dump has been read and processed. A
@@ -48,8 +63,8 @@ times larger there; the fixed waits are the same on any machine.
 
 | Stage (`bench_shot_pipeline.py`) | Median |
 | --- | --- |
-| Radar: clock sync, fixed waits (fractional clock) | 360 ms |
-| Radar: re-arm, fixed waits | 551 ms |
+| Radar: clock sync, before the shot (fractional clock) | 360 ms |
+| Radar: re-arm, after the shot | 551 ms |
 | Parse the dump text | 0.3 ms |
 | Process: speeds, spin, impact (24 recorded captures) | 34 ms |
 | Write the raw capture to the session log | 0.4 ms |
@@ -95,11 +110,11 @@ uv run python scripts/analysis/shot_latency_report.py ~/openflight_sessions/sess
 ```
 
 Lays each recorded shot out as a timeline from the trigger: first byte of the
-dump, radar ready (parsed, synced, re-armed and processed), first numbers on
-the UI, the finished shot, and the send to the simulator. "After the dump" is
-the radar-ready time minus the dump's own transfer time: what the clock sync,
-the re-arm and the processing add on your hardware. `--shots` prints every
-shot.
+dump, radar ready (parsed, synced and processed), first numbers on the UI, the
+finished shot, and the send to the simulator. "After the dump" is the
+radar-ready time minus the dump's own transfer time: what the clock sync and
+the processing add on your hardware (and, in logs from before the re-arm was
+moved, the re-arm too). `--shots` prints every shot.
 
 The server also logs a line per shot that needs no script:
 

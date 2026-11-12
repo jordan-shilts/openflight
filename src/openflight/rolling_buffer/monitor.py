@@ -770,6 +770,29 @@ class RollingBufferMonitor:
                     exc=e,
                 )
                 time.sleep(1.0)
+            finally:
+                # Whatever became of the capture (published, too slow, failed,
+                # or the monitor was stopped under it), the trigger gets to
+                # re-arm the radar, as the last thing before the next wait.
+                if capture is not None:
+                    self._finish_capture()
+
+    def _finish_capture(self) -> None:
+        """Let the trigger do its after-capture radar work. Never raises.
+
+        A failure here must not end the capture thread; the sound trigger
+        keeps an unpaid re-arm on its books and tries again before it waits.
+        """
+        try:
+            self.trigger.finish_capture(self.radar)
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            logger.error("[MONITOR] Radar re-arm after capture failed: %s", error, exc_info=True)
+            log_session_error(
+                "Radar re-arm after capture failed",
+                component="rolling_buffer_monitor",
+                context={"trigger_type": self.trigger_type},
+                exc=error,
+            )
 
     def _create_shot(self, processed: ProcessedCapture) -> Optional[Shot]:
         """

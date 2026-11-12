@@ -777,6 +777,9 @@ class TestSoundTriggerTimestampPropagation:
             '{"sample_time": 0.0}',
             first_byte_timestamp=12345.678,
         )
+        # the re-arm waits for the capture to be handled, then uses the trigger's split
+        radar.rearm_rolling_buffer.assert_not_called()
+        trigger.finish_capture(radar)
         radar.rearm_rolling_buffer.assert_called_once_with(12)
 
     def test_sound_trigger_prefers_ops_clock_sync_for_trigger_timestamp(self):
@@ -1374,6 +1377,10 @@ class TestRollingBufferShotIdentity:
                     if self.calls == 1:
                         return processed.capture
                     monitor._running = False
+                    return None
+
+                @staticmethod
+                def finish_capture(_radar):
                     return None
 
                 @staticmethod
@@ -3021,6 +3028,10 @@ class TestShutdownPreservesRollingBuffer:
                 return None
 
             @staticmethod
+            def finish_capture(_radar):
+                return None
+
+            @staticmethod
             def drain_diagnostics():
                 return [
                     {
@@ -3092,6 +3103,10 @@ class TestShutdownPreservesRollingBuffer:
                 if self.calls == 1:
                     return capture
                 monitor._running = False
+                return None
+
+            @staticmethod
+            def finish_capture(_radar):
                 return None
 
             @staticmethod

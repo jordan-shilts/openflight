@@ -207,7 +207,7 @@ def test_command_line_prints_a_summary_and_writes_json(tmp_path, capsys, monkeyp
 
     printed = capsys.readouterr().out
     assert "1 shot(s) from 1 session log(s)" in printed
-    assert "after the dump: sync, re-arm, processing" in printed
+    assert "after the dump: clock sync, processing" in printed
     assert "#1:" in printed
     written = json.loads(out.read_text())
     assert written["summary"]["shot_s"]["median_s"] == _approx(9.4)

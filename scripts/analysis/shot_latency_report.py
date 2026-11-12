@@ -6,7 +6,7 @@ For every shot in the given session JSONL files it reads the timestamps the
 server already records and lays them out as a timeline from the trigger:
 
     first byte     the OPS243 starts sending its buffer
-    radar ready    the capture is parsed, clock-synced, re-armed and processed
+    radar ready    the capture is parsed, clock-synced and processed
                    (the moment the raw capture is logged)
     first numbers  the OPS numbers reach the UI (only logged when a slower
                    sensor is still working: pipeline_ms.initial_ui)
@@ -14,8 +14,9 @@ server already records and lays them out as a timeline from the trigger:
     simulator      the shot is sent to each simulator
 
 "radar ready" minus the dump's own transfer time (bytes over the link's baud
-rate) is what the Pi adds after the last byte arrives: the clock sync, the
-radar re-arm and the signal processing.
+rate) is what the Pi adds after the last byte arrives: the clock sync and the
+signal processing. In logs from before the radar re-arm was moved behind the
+shot, it also holds the re-arm, about 0.55 s.
 
 Usage:
     uv run python scripts/analysis/shot_latency_report.py ~/openflight_sessions/session_*.jsonl
@@ -155,7 +156,7 @@ def _timeline(
 STAGES = (
     ("first_byte_s", "trigger -> first byte"),
     ("dump_transfer_s", "dump transfer (bytes / baud)"),
-    ("after_dump_s", "after the dump: sync, re-arm, processing"),
+    ("after_dump_s", "after the dump: clock sync, processing"),
     ("radar_ready_s", "trigger -> radar ready"),
     ("first_numbers_s", "trigger -> first numbers on the UI"),
     ("shot_s", "trigger -> finished shot"),

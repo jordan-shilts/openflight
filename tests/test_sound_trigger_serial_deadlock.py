@@ -14,6 +14,10 @@ Fixes under test:
 3. SoundTrigger talks on the wire (clock sync) BEFORE re-arming — while the
    radar is idle after its dump and HOST_INT pulses are harmless — and
    re-arms last. Rejected/false triggers skip clock sync and re-arm fast.
+
+For an accepted capture "last" is finish_capture, after the shot has been
+published (test_sound_trigger_rearm_after_publish.py); the order of the two
+serial exchanges is unchanged.
 """
 
 import json
@@ -117,6 +121,7 @@ def test_accepted_capture_clock_syncs_before_rearm():
     radar = ScriptedRadar(_dump_response(i_samples, q_samples))
     trigger = SoundTrigger()
     capture = trigger.wait_for_trigger(radar, RollingBufferProcessor(), timeout=1.0)
+    trigger.finish_capture(radar)
 
     assert capture is not None, "synthetic swing should be accepted"
     assert "clock_sync" in radar.calls and "rearm" in radar.calls
