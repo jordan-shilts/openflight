@@ -89,11 +89,16 @@ requirements and setup specific to GSPro.
 |---|---|
 | `BallData.Speed` | measured ball speed (required — shot dropped if missing) |
 | `BallData.VLA` / `HLA` | measured launch angles, else model fallback |
-| `BallData.TotalSpin` | measured spin if high-confidence, else per-club model |
-| `BallData.SpinAxis` | measured spin axis, else `0` |
+| `BallData.TotalSpin` | measured spin if high-confidence, else the club-typical spin the kiosk's carry uses |
+| `BallData.SpinAxis` | spin axis derived from launch direction and club path ([D-plane](../../how-it-works/ballistics.md#curve-spin-axis-from-the-d-plane)), else `0`. Irons and wedges only, unless `--wood-spin-axis` |
 | `BallData.BackSpin` / `SideSpin` | derived from total spin + axis |
 | `BallData.CarryDistance` | OpenFlight's carry estimate |
-| `ClubData.Speed` / `Path` | measured if available (`ContainsClubData` set accordingly) |
+| `ClubData.Speed` | measured if available |
+| `ClubData.Path` | a club radar's path, or the camera-fused path at tier high or medium, else `0` |
+| `ClubData.AngleOfAttack` | the camera-fused attack angle at tier high or medium, else `0` |
+| `ClubData.FaceToTarget` / `Loft` | face angle and dynamic loft derived from measured launch and the path and attack angle above, else `0` |
+
+`ContainsClubData` is set when any club field was sent.
 
 ## Club selection
 

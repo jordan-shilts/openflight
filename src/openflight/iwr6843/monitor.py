@@ -15,6 +15,7 @@ from typing import Callable
 from openflight.gpio_factory import ensure_lgpio_pin_factory
 from openflight.iwr6843.driver import IWR6843Radar
 from openflight.iwr6843.dump import HEADER, parse_header, payload_nbytes
+from openflight.measuring_status import MEASURING, OFFLINE, READY
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,16 @@ class IWR6843CaptureMonitor:
         match_tolerance_s: float = 0.75,
         save_dumps: bool = False,
         trigger_observers: list[Callable[[float], None]] | None = None,
+        status_callback: Callable[[str], None] | None = None,
     ):
+        """``status_callback`` hears whether a swing now gets a TI capture.
+
+        It is called with ``measuring_status.OFFLINE`` until armed and once
+        stopped, ``READY`` while armed and idle, and ``MEASURING`` from an
+        accepted edge until its dump completes. It runs under the monitor's
+        lock (so reports arrive in order) and must return quickly without
+        calling back into the monitor.
+        """
         self.config_path = Path(config_path)
         self.output_dir = Path(output_dir).expanduser()
         self.gpio_pin = gpio_pin
@@ -96,6 +106,16 @@ class IWR6843CaptureMonitor:
         self._condition = threading.Condition()
         self._worker: threading.Thread | None = None
         self._trigger_observers = list(trigger_observers or [])
+        self._status_callback = status_callback
+
+    def _report_status(self, state: str) -> None:
+        """Pass a readiness change to ``status_callback``; errors never break capture."""
+        if self._status_callback is None:
+            return
+        try:
+            self._status_callback(state)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.warning("[IWR6843] Status callback failed", exc_info=True)
 
     @property
     def port(self) -> str:
@@ -147,6 +167,10 @@ class IWR6843CaptureMonitor:
             self._worker.start()
             if armed:
                 self.arm()
+            else:
+                # Holds the status light dark until arm() is called.
+                with self._condition:
+                    self._report_status(OFFLINE)
         except Exception:
             self._running = False
             if self._button is not None:
@@ -174,7 +198,9 @@ class IWR6843CaptureMonitor:
         # Attach while logically disarmed so a line already high from OPS
         # startup cannot synchronously create a false capture.
         self._button.when_pressed = self.notify_trigger
-        self._armed = True
+        with self._condition:
+            self._armed = True
+            self._report_status(READY)
         logger.info("[IWR6843] Armed on BCM%d", self.gpio_pin)
 
     def notify_trigger(self, timestamp: float | None = None) -> bool:
@@ -185,8 +211,11 @@ class IWR6843CaptureMonitor:
         with self._condition:
             # Reject acoustic ringing and any second edge while the seven-second
             # UART dump is in flight. The OPS side makes the same shot wait.
+            # Re-check running/armed under the lock: stop() may have won the race.
             if (
-                self._capture_active
+                not self._running
+                or not self._armed
+                or self._capture_active
                 or not self._events.empty()
                 or edge_timestamp - self._last_edge_timestamp < 0.1
             ):
@@ -194,6 +223,7 @@ class IWR6843CaptureMonitor:
                 return False
             self._last_edge_timestamp = edge_timestamp
             self._events.put_nowait(edge_timestamp)
+            self._report_status(MEASURING)
             self._condition.notify_all()
         for observer in self._trigger_observers:
             try:
@@ -259,6 +289,8 @@ class IWR6843CaptureMonitor:
             with self._condition:
                 self._capture_active = False
                 self._captures.append(capture)
+                if self._running and self._armed:
+                    self._report_status(READY)
                 self._condition.notify_all()
             logger.info(
                 "[IWR6843] Capture #%d complete: %s in %.2fs",
@@ -324,8 +356,10 @@ class IWR6843CaptureMonitor:
         """Drain active capture, stop firmware, then release host resources."""
         if not self._running:
             return
-        self._armed = False
-        self._running = False
+        with self._condition:
+            self._armed = False
+            self._running = False
+            self._report_status(OFFLINE)
         if self._button is not None:
             self._button.when_pressed = None
             self._button.close()

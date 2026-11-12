@@ -10,6 +10,7 @@ import { SimStatus } from '../SimStatus';
 interface MenuSheetProps {
   onClose: () => void;
   onShutdown: () => void;
+  onOpenPhoneLink: () => void;
 }
 
 /**
@@ -19,8 +20,9 @@ interface MenuSheetProps {
  * block is an addition: the mockup replaced the old top header, and simulator
  * state had nowhere else to go. Battery lives in the footer.
  * Socket connection lives on the panel header LED.
+ * "Open on your phone" is for the kiosk; CSS hides it when this is the phone.
  */
-export function MenuSheet({ onClose, onShutdown }: MenuSheetProps) {
+export function MenuSheet({ onClose, onShutdown, onOpenPhoneLink }: MenuSheetProps) {
   const simStatuses = useSystemStore((state) => state.simStatuses);
   const { t } = useI18n();
   const { unitSystem, setUnitSystem } = useUnitPreference();
@@ -73,7 +75,7 @@ export function MenuSheet({ onClose, onShutdown }: MenuSheetProps) {
           </select>
         </section>
 
-        <section className="menu-sheet__section">
+        <section className="menu-sheet__section menu-sheet__section--system">
           <span className="menu-sheet__section-title">{t('menu.system')}</span>
           {Object.keys(simStatuses).length > 0 ? (
             <div className="menu-sheet__status-row menu-sheet__status-row--stacked">
@@ -81,6 +83,9 @@ export function MenuSheet({ onClose, onShutdown }: MenuSheetProps) {
               <SimStatus statuses={simStatuses} />
             </div>
           ) : null}
+          <button type="button" className="menu-sheet__phone-link" onClick={onOpenPhoneLink}>
+            {t('menu.openOnPhone')}
+          </button>
         </section>
 
         <button type="button" className="menu-sheet__shutdown" onClick={onShutdown}>

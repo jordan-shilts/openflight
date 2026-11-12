@@ -3198,6 +3198,8 @@ class TestShutdownPreservesRollingBuffer:
         waiting = threading.Event()
 
         class IdleRadar:
+            rolling_buffer_armed = True
+
             def __init__(self):
                 self.cancel_event = None
 

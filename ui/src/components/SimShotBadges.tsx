@@ -20,6 +20,8 @@ const FIELD_LABELS: Record<string, string> = {
   club_speed: 'Club',
   club_path: 'Path',
   attack_angle: 'AoA',
+  face_angle: 'Face',
+  dynamic_loft: 'Loft',
 };
 
 function formatValue(value: number | null): string {

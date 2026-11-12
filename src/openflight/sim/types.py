@@ -127,6 +127,10 @@ class ResolvedShot:
     # The camera's experimental attack angle, only when its confidence tier is high
     # or medium (resolver.SENDABLE_ATTACK_TIERS); None => not sent.
     attack_angle_deg: Optional[float] = None
+    # D-plane face angle (to target) and dynamic loft, derived from measured
+    # launch and trusted club delivery; None => an input was missing, not sent.
+    face_angle_deg: Optional[float] = None
+    dynamic_loft_deg: Optional[float] = None
     provenance: Dict[str, str] = field(default_factory=dict)
 
     def as_values(self) -> Dict[str, Optional[float]]:
@@ -143,6 +147,8 @@ class ResolvedShot:
             "club_speed": self.club_speed_mph,
             "club_path": self.club_path_deg,
             "attack_angle": self.attack_angle_deg,
+            "face_angle": self.face_angle_deg,
+            "dynamic_loft": self.dynamic_loft_deg,
         }
 
 

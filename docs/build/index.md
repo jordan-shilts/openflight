@@ -30,6 +30,10 @@ it is done and verified.
 
     *Optional.* Geekworm X1202/X1206 UPS with native telemetry.
 
+- :material-led-on: **[Status light](status-light.md)**
+
+    *Optional.* One LED on the case: solid to swing, blinking while measuring.
+
 - :material-cube-outline: **[Enclosure & case](https://github.com/open-flight/openflight-enclosure)**
 
     The printed case, in its own repository. The older

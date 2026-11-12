@@ -97,6 +97,7 @@ Carry model and spin handling.
 | `--ballistics` | flag | Use the physics-based carry simulator (drag + Magnus, RK4). This is the default; shots without a vertical launch angle fall back to the legacy table estimator. |
 | `--no-ballistics` | flag | Disable the physics simulator and use the legacy carry table for all shots. |
 | `--calculated-spin` | flag | Replace radar-measured spin with the kinematic estimate (170*v*sin(LA)^1.2) when the launch angle was measured. The 24 GHz OPS return carries no usable spin line (see src/openflight/spin_estimate.py); the measured value is kept in spin_rpm_measured for offline scoring |
+| `--wood-spin-axis` | flag | Also derive a spin axis (draw/fade curve) for drivers, woods and hybrids. Off by default: an off-centre strike on those clubs tilts the axis as much as face-to-path does, and strike location is not measured, so the curve can be far out or reversed. Irons and wedges always get one when launch direction and club path are trusted (see src/openflight/d_plane.py). |
 
 ## Swing speed
 
@@ -133,6 +134,14 @@ Outbound connectors and battery status.
 | --- | --- | --- |
 | `--battery` | — | Show battery and external-power status using the selected provider (`geekworm`, or `mock` for a simulated battery) |
 | `--sim` | flag | Enable simulator connectors from config/sim.json (GSPro / OpenGolfSim / PAR-TEE). Off by default. |
+
+## Status light
+
+Optional front-panel LED. See [Status light](../build/status-light.md).
+
+| Flag | Type / default | Description |
+| --- | --- | --- |
+| `--status-led-gpio` | int (BCM); default none (no LED) | BCM GPIO driving a front-panel status LED: solid when ready for a swing, blinking (2 Hz) while the last swing is measured, off when not ready. Suggested: `23` (physical pin 16). Pins the build already uses are refused at startup: 0-3, 6, 14-17 and the `--iwr6843-trigger-pin` |
 
 ## High-speed camera capture
 

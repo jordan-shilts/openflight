@@ -55,6 +55,24 @@ def test_build_shot_sends_attack_angle_when_resolved():
     assert p["ShotDataOptions"]["ContainsClubData"] is True
 
 
+def test_build_shot_sends_face_angle_and_loft_when_resolved():
+    p = _build(GSProCodec(), _resolved(face_angle_deg=1.84, dynamic_loft_deg=13.36))
+    assert p["ClubData"]["FaceToTarget"] == 1.8
+    assert p["ClubData"]["Loft"] == 13.4
+    # face or loft alone (no club speed) still carries club data
+    p = _build(GSProCodec(), _resolved(club_speed_mph=None, face_angle_deg=-0.6))
+    assert p["ClubData"]["FaceToTarget"] == -0.6
+    assert p["ShotDataOptions"]["ContainsClubData"] is True
+    p = _build(GSProCodec(), _resolved(club_speed_mph=None, dynamic_loft_deg=21.0))
+    assert p["ShotDataOptions"]["ContainsClubData"] is True
+
+
+def test_build_shot_without_face_angle_or_loft_leaves_them_zero():
+    p = _build(GSProCodec(), _resolved())
+    assert p["ClubData"]["FaceToTarget"] == 0.0
+    assert p["ClubData"]["Loft"] == 0.0
+
+
 def test_build_shot_without_attack_angle_leaves_it_zero():
     p = _build(GSProCodec(), _resolved())
     assert p["ClubData"]["AngleOfAttack"] == 0.0

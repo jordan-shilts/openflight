@@ -4,9 +4,10 @@ from datetime import datetime
 
 import pytest
 
+from openflight.ballistics import CLUB_TYPICAL_SPIN_RPM, resolve_launch
 from openflight.clubs import ClubType
 from openflight.launch_monitor import Shot
-from openflight.sim.resolver import resolve_shot, SPIN_MODEL_RPM
+from openflight.sim.resolver import resolve_shot
 from openflight.sim.types import IncompleteShotError, PlayerState
 
 
@@ -54,25 +55,47 @@ def test_missing_hla_falls_back_to_zero():
 def test_low_spin_confidence_uses_model():
     shot = _shot(spin_rpm=2500.0, spin_confidence=0.4, club=ClubType.DRIVER)
     r = resolve_shot(shot, PlayerState())
-    assert r.total_spin_rpm == SPIN_MODEL_RPM[ClubType.DRIVER]
+    assert r.total_spin_rpm == CLUB_TYPICAL_SPIN_RPM[ClubType.DRIVER]
     assert r.provenance["total_spin"] == "estimated"
 
 
 def test_missing_spin_uses_model():
     r = resolve_shot(_shot(club=ClubType.IRON_7), PlayerState())
-    assert r.total_spin_rpm == SPIN_MODEL_RPM[ClubType.IRON_7]
+    assert r.total_spin_rpm == CLUB_TYPICAL_SPIN_RPM[ClubType.IRON_7]
     assert r.provenance["total_spin"] == "estimated"
 
 
-def test_spin_model_covers_every_club():
-    assert set(SPIN_MODEL_RPM) == set(ClubType)
+@pytest.mark.parametrize("club", list(ClubType))
+def test_simulator_gets_the_spin_the_kiosk_carry_ran_on(club):
+    """One spin per shot: the flight a simulator draws must run on the spin
+    the kiosk's Carry tile was computed from, for every club."""
+    shot = _shot(club=club, launch_angle_vertical=14.0)
+    kiosk = resolve_launch(shot)
+    sim = resolve_shot(shot, PlayerState())
+    assert sim.total_spin_rpm == kiosk.spin_rpm
+    assert sim.provenance["total_spin"] == "estimated"
+
+
+def test_simulator_and_kiosk_agree_on_measured_spin():
+    shot = _shot(club=ClubType.IRON_7, launch_angle_vertical=17.0, spin_rpm=6200.0, spin_confidence=0.9)
+    assert resolve_shot(shot, PlayerState()).total_spin_rpm == resolve_launch(shot).spin_rpm == 6200.0
+
+
+@pytest.mark.parametrize("spin_rpm", [0.0, -50.0])
+def test_non_positive_spin_is_never_treated_as_measured(spin_rpm):
+    shot = _shot(club=ClubType.IRON_7, launch_angle_vertical=17.0, spin_rpm=spin_rpm, spin_confidence=0.95)
+    sim = resolve_shot(shot, PlayerState())
+    kiosk = resolve_launch(shot)
+    assert sim.total_spin_rpm == kiosk.spin_rpm == CLUB_TYPICAL_SPIN_RPM[ClubType.IRON_7]
+    assert sim.provenance["total_spin"] == "estimated"
+    assert kiosk.spin_source == "club_typical"
 
 
 def test_putter_without_reliable_spin_sends_putt_spin():
     shot = _shot(club=ClubType.PUTTER, ball_speed_mph=6.0, launch_angle_vertical=1.4,
                  spin_rpm=90.0, spin_confidence=0.3)
     r = resolve_shot(shot, PlayerState())
-    assert r.total_spin_rpm == SPIN_MODEL_RPM[ClubType.PUTTER] < 200
+    assert r.total_spin_rpm == CLUB_TYPICAL_SPIN_RPM[ClubType.PUTTER] < 200
 
 
 def test_missing_spin_axis_falls_back_to_zero():
@@ -102,6 +125,47 @@ def test_missing_club_path_falls_back_to_zero():
     r = resolve_shot(shot, PlayerState())
     assert r.club_path_deg == 0.0
     assert r.provenance["club_path"] == "estimated"
+
+
+@pytest.mark.parametrize("tier,sent", [("high", True), ("medium", True), ("low", False), ("withheld", False), (None, False)])
+def test_camera_club_path_is_sent_only_when_confident(tier, sent):
+    shot = _shot(spin_rpm=2500.0, spin_confidence=0.9)
+    shot.experimental_fused_club_path_deg = -2.6
+    shot.experimental_fused_club_path_confidence = tier
+    r = resolve_shot(shot, PlayerState())
+    if sent:
+        assert r.club_path_deg == -2.6
+        assert r.provenance["club_path"] == "measured"
+    else:
+        assert r.club_path_deg == 0.0
+        assert r.provenance["club_path"] == "estimated"
+
+
+def test_measured_club_path_wins_over_the_camera_one():
+    shot = _shot(club_path_deg=0.5)
+    shot.experimental_fused_club_path_deg = -2.6
+    shot.experimental_fused_club_path_confidence = "high"
+    assert resolve_shot(shot, PlayerState()).club_path_deg == 0.5
+
+
+def test_d_plane_face_angle_and_dynamic_loft_are_passed_through():
+    shot = _shot(face_angle_deg=1.8, dynamic_loft_deg=13.4)
+    r = resolve_shot(shot, PlayerState())
+    assert r.face_angle_deg == 1.8
+    assert r.dynamic_loft_deg == 13.4
+    assert r.provenance["face_angle"] == "measured"
+    assert r.provenance["dynamic_loft"] == "measured"
+    assert r.as_values()["face_angle"] == 1.8
+    assert r.as_values()["dynamic_loft"] == 13.4
+
+
+def test_missing_face_angle_and_dynamic_loft_are_none():
+    r = resolve_shot(_shot(), PlayerState())
+    assert r.face_angle_deg is None
+    assert r.dynamic_loft_deg is None
+    assert r.provenance["face_angle"] == "estimated"
+    assert r.provenance["dynamic_loft"] == "estimated"
+    assert r.as_values()["face_angle"] is None
 
 
 @pytest.mark.parametrize("tier,sent", [("high", True), ("medium", True), ("low", False), ("withheld", False), (None, False)])

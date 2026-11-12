@@ -9,11 +9,14 @@ import {
   flightTimeAt,
   flownBy,
   formatTick,
+  lateralExtent,
   niceStep,
   polylinePoints,
+  projectLateral,
   projectX,
   projectY,
   toFlightPoints,
+  topViewPoints,
   type ChartFrame,
   type FlightAxes,
   type FlightPoint,
@@ -33,17 +36,17 @@ const trajectory: ShotTrajectory = {
 };
 
 const flight: FlightPoint[] = [
-  { distance: 0, height: 0, time: 0 },
-  { distance: 100, height: 60, time: 2 },
-  { distance: 150, height: 90, time: 3.5 },
-  { distance: 250, height: 0, time: 6 },
+  { distance: 0, height: 0, lateral: 0, time: 0 },
+  { distance: 100, height: 60, lateral: -1, time: 2 },
+  { distance: 150, height: 90, lateral: -2, time: 3.5 },
+  { distance: 250, height: 0, lateral: -4, time: 6 },
 ];
 
 const axes: FlightAxes = { maxDistance: 300, distanceStep: 50, maxHeight: 120, heightStep: 40 };
 const frame: ChartFrame = { width: 640, height: 260, left: 30, right: 10, top: 20, bottom: 40 };
 
 describe('toFlightPoints', () => {
-  it('keeps yards and feet for imperial, drops lateral, and keeps time', () => {
+  it('keeps yards and feet for imperial, with lateral and time', () => {
     expect(toFlightPoints(trajectory, 'imperial')).toEqual(flight);
   });
 
@@ -52,6 +55,7 @@ describe('toFlightPoints', () => {
 
     expect(second.distance).toBeCloseTo(91.44, 2);
     expect(second.height).toBeCloseTo(18.288, 3);
+    expect(second.lateral).toBeCloseTo(-0.9144, 4);
     expect(second.time).toBe(2);
   });
 });
@@ -139,12 +143,38 @@ describe('flownBy', () => {
     const flown = flownBy(flight, 1);
 
     expect(flown).toHaveLength(2);
-    expect(flown[1]).toEqual({ distance: 50, height: 30, time: 1 });
+    expect(flown[1]).toEqual({ distance: 50, height: 30, lateral: -0.5, time: 1 });
   });
 
   it('returns the whole flight once it has landed', () => {
     expect(flownBy(flight, 6)).toEqual(flight);
     expect(flownBy(flight, 99)).toEqual(flight);
+  });
+});
+
+describe('top view', () => {
+  const at = (lateral: number): FlightPoint => ({ distance: 100, height: 0, lateral, time: 1 });
+
+  it('never zooms in past ten each side, so a near-straight shot looks straight', () => {
+    expect(lateralExtent([flight])).toBe(10);
+    expect(lateralExtent([])).toBe(10);
+  });
+
+  it('widens to a round number that clears the widest flight, left or right', () => {
+    expect(lateralExtent([[at(18)]])).toBe(40);
+    expect(lateralExtent([[at(-18)]])).toBe(40);
+    expect(lateralExtent([[at(3)], [at(-34)]])).toBe(50);
+  });
+
+  it('puts the target line in the middle, left above it and right below', () => {
+    expect(projectLateral(0, 20, frame)).toBe(120);
+    expect(projectLateral(-20, 20, frame)).toBe(20);
+    expect(projectLateral(20, 20, frame)).toBe(220);
+    expect(projectLateral(10, 20, frame)).toBe(170);
+  });
+
+  it('shares the side view distance scale', () => {
+    expect(topViewPoints(flight, axes, 10, frame)).toBe('30.0,120.0 230.0,110.0 330.0,100.0 530.0,80.0');
   });
 });
 

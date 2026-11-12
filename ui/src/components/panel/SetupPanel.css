@@ -114,6 +114,26 @@
   white-space: nowrap;
 }
 
+@media (max-width: 640px) and (orientation: portrait) {
+  .setup-panel__body {
+    gap: var(--space-md);
+    padding-inline: 16px;
+  }
+
+  .setup-panel__row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: var(--space-xs) 0;
+  }
+
+  .setup-panel__label {
+    grid-column: 1 / -1;
+  }
+
+  .setup-panel__trailing:not(:empty) {
+    margin-left: var(--space-md);
+  }
+}
+
 /* 800x400: four rows plus the hint have to fit above the footer. */
 @media (max-height: 440px) {
   .setup-panel__body {

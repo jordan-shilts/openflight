@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { Shot } from '../../types/shot';
 import { buildClubDelivery, faceShare, selectAttackAngle, selectClubPath } from './clubDelivery';
@@ -94,6 +96,19 @@ describe('selectAttackAngle', () => {
 });
 
 describe('faceShare', () => {
+  it('matches the table the server uses for ball flight', () => {
+    // src/openflight/d_plane.py reads the same fixture (tests/test_d_plane.py),
+    // so the Club tab and the spin axis can never use different shares.
+    const fixture = fileURLToPath(new URL('../../../../tests/fixtures/d_plane_face_share.json', import.meta.url));
+    const { _comment, ...table } = JSON.parse(readFileSync(fixture, 'utf8')) as Record<string, number | string>;
+
+    expect(_comment).toBeTruthy();
+    expect(Object.keys(table).length).toBeGreaterThan(20);
+    for (const [club, share] of Object.entries(table)) {
+      expect(faceShare(club), club).toBe(share);
+    }
+  });
+
   it.each([
     ['driver', 0.85],
     ['3-wood', 0.82],

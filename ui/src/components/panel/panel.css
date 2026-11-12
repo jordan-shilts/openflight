@@ -13,11 +13,19 @@
   flex-direction: column;
   height: 100vh;
   max-height: 100vh;
+  /* dvh: a phone browser's toolbars must not cover the footer. Same as vh on the kiosk. */
+  height: 100dvh;
+  max-height: 100dvh;
   overflow: hidden;
   background: var(--color-bg);
   color: var(--color-text);
   /* Containing block for the menu sheet and picker overlay. */
   position: relative;
+  /* A home-screen app runs under the phone's notch. Borders, not padding, so the
+     overlays placed against this box stay clear too. All zero on the kiosk. */
+  border-style: solid;
+  border-color: var(--color-status-bar);
+  border-width: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
   /* Header chips (Shots / Camera) set the chrome height for every screen. */
   --panel-control-height: 32px;
 }
@@ -270,6 +278,8 @@
   gap: 1.6vw;
   padding: 8px 2.5vw;
   border-top: 1px solid var(--color-border);
+  /* Lifts the tabs above a phone's home indicator; zero on the kiosk. */
+  border-bottom: env(safe-area-inset-bottom, 0px) solid var(--color-surface);
   flex-shrink: 0;
   background: var(--color-surface);
 }
@@ -714,6 +724,21 @@
   flex: 1 1 auto;
   min-height: 0;
   background: var(--color-surface);
+}
+
+/* Top view: a strip under the side view, drawn only when the direction was measured. */
+.flight-view__top {
+  position: relative;
+  flex: 0 0 auto;
+  height: clamp(2.75rem, 16vh, 4.5rem);
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+}
+
+.flight-chart__target {
+  stroke: color-mix(in srgb, var(--color-text) 28%, transparent);
+  stroke-width: 1;
+  stroke-dasharray: 6 5;
 }
 
 .flight-chart {
@@ -1399,6 +1424,8 @@
   position: absolute;
   left: 20px;
   bottom: 66px;
+  /* The footer grows by the phone's home-indicator inset; zero on the kiosk. */
+  margin-bottom: env(safe-area-inset-bottom, 0px);
   width: 320px;
   max-height: calc(100% - 86px);
   overflow-y: auto;
@@ -1524,6 +1551,7 @@
   color: var(--color-text);
 }
 
+.menu-sheet__phone-link,
 .menu-sheet__shutdown {
   min-height: 44px;
   border: 1px solid var(--color-danger-border);
@@ -1538,6 +1566,18 @@
   cursor: pointer;
 }
 
+.menu-sheet__phone-link {
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+/* The QR screen is for the kiosk: no use once the app is on the phone itself. */
+@media (display-mode: standalone) {
+  .menu-sheet__phone-link {
+    display: none;
+  }
+}
+
 /* -------------------------------------------------------- picker overlay -- */
 
 .picker-overlay {
@@ -1547,6 +1587,12 @@
   background: var(--color-bg);
   display: flex;
   flex-direction: column;
+}
+
+/* Full-screen sheets keep their last row above the phone's home indicator. */
+.picker-overlay,
+.profile-name-modal {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .picker-overlay__header {
@@ -1986,6 +2032,32 @@
   }
 }
 
+/* 800-wide kiosks are too short for the menu in one column: settings left, system right. */
+@media (max-height: 500px) and (orientation: landscape) {
+  .menu-sheet {
+    width: min(560px, calc(100% - 24px));
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(3, auto);
+    column-gap: 18px;
+  }
+
+  .menu-sheet__section {
+    grid-column: 1;
+  }
+
+  .menu-sheet__section--system {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+
+  .menu-sheet__shutdown {
+    grid-column: 2;
+    grid-row: 3;
+    align-self: end;
+  }
+}
+
 /* ------------------------------------------- phone held upright (390x844) -- */
 /* Landscape kiosks never match, so their layout is untouched. */
 
@@ -2123,6 +2195,152 @@
 
   .live-panel__grid .live-panel__lead .metric-card__unit {
     font-size: 0.63em;
+  }
+
+  /* A drag on a list must not pull the page into a browser refresh. */
+  html,
+  body {
+    overscroll-behavior: none;
+  }
+
+  .menu-sheet {
+    left: 16px;
+    right: 16px;
+    width: auto;
+  }
+
+  .menu-sheet__phone-link {
+    display: none;
+  }
+
+  .shutdown-dialog,
+  .shutdown-dialog--pending {
+    min-width: 0;
+    margin-inline: 16px;
+    padding: 1.5rem 1rem;
+  }
+
+  .shutdown-dialog__buttons {
+    flex-wrap: wrap;
+  }
+
+  .shutdown-dialog__confirm,
+  .shutdown-dialog__cancel {
+    flex: 1 1 auto;
+    padding-inline: 0.75rem;
+  }
+
+  .stats-panel__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: repeat(3, 1fr);
+  }
+
+  .stats-panel__grid--of-4 {
+    grid-template-rows: repeat(2, 1fr);
+  }
+
+  .stats-panel__grid .metric-card {
+    padding: 16px;
+  }
+
+  .stats-panel__grid .metric-card__value {
+    font-size: clamp(1.75rem, 11vw, 3rem);
+  }
+
+  .profiles-panel__grid {
+    grid-template-columns: minmax(0, 1fr);
+    padding-inline: 16px;
+  }
+
+  /* Shots: number, player and club on one line, the five values on the next. */
+  .panel.shots-panel .panel-header {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .panel.shots-panel .panel-header__identity {
+    flex: 1 0 100%;
+  }
+
+  .panel.shots-panel .panel-header__actions {
+    flex: 1 0 100%;
+  }
+
+  .panel.shots-panel .panel-header__club {
+    flex-shrink: 0;
+  }
+
+  .panel.shots-panel .panel-header__actions .panel-action {
+    flex: 1;
+    justify-content: center;
+    height: 44px;
+  }
+
+  .shots-panel__columns,
+  .shots-panel__row-main {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0 6px;
+  }
+
+  .shots-panel__columns {
+    padding-inline: 16px;
+  }
+
+  .shots-panel__columns > :not(.shots-panel__num) {
+    display: none;
+  }
+
+  .shots-panel__row {
+    position: relative;
+    padding-inline: 16px;
+  }
+
+  .shots-panel__row-main {
+    grid-template-rows: 52px auto;
+    height: auto;
+    padding-bottom: 12px;
+  }
+
+  .shots-panel__index,
+  .shots-panel__profile {
+    grid-area: 1 / 1 / 2 / -1;
+  }
+
+  .shots-panel__profile {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 8px;
+    padding-inline: 2.25rem 7rem;
+  }
+
+  .shots-panel__value {
+    font-size: 1.125rem;
+  }
+
+  .shots-panel__actions {
+    position: absolute;
+    top: 4px;
+    right: 16px;
+    width: auto;
+    gap: 6px;
+  }
+
+  .shots-panel__replay,
+  .shots-panel__delete {
+    width: 52px;
+  }
+
+  .shots-panel__validation {
+    padding-inline: 16px;
+  }
+
+  .shots-panel__field input,
+  .shots-panel__field select {
+    height: 44px;
+  }
+
+  .panel-app__debug {
+    padding-inline: 16px;
   }
 }
 
@@ -2353,7 +2571,9 @@
     touch-action: none;
   }
 
+  /* Each card keeps its full height and the body scrolls, instead of squeezing three into the screen. */
   .club-panel__cards {
+    flex: 0 0 auto;
     grid-template-columns: minmax(0, 1fr);
   }
 }

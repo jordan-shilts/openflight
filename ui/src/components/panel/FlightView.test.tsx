@@ -178,6 +178,122 @@ describe('FlightView', () => {
     expect(html).toContain('No flight for this shot');
   });
 
+  describe('top view', () => {
+    function curving(lateralAtLanding: number): ShotTrajectory {
+      const flight = flightOf(263.4, 92.6);
+      return {
+        ...flight,
+        points: flight.points.map(([distance, height, , time], index) => [
+          distance,
+          height,
+          (lateralAtLanding * index * index) / 16,
+          time,
+        ]),
+      };
+    }
+
+    it('joins the side view when the start direction was measured', () => {
+      const html = render(makeShot());
+
+      expect(html).toContain('class="flight-view__top"');
+      expect(html).toContain('aria-label="Top view of the flight: 2 yds left"');
+      expect(html).toMatch(/flight-chart__offline"[^>]*>2 yds left</);
+      expect(polylinePointCount(html, 'flight-chart__flight flight-chart__flight--top')).toEqual([5]);
+    });
+
+    it('says which side a curving shot finished on, in the chosen units', () => {
+      const fade = makeShot({ trajectory: curving(18.4), spin_axis_deg: 9.5 });
+
+      expect(render(fade)).toMatch(/flight-chart__offline"[^>]*>18 yds right</);
+      expect(render(fade, [], false, 'metric')).toMatch(/flight-chart__offline"[^>]*>17 m right</);
+      expect(render(makeShot({ trajectory: curving(-31) }))).toMatch(/flight-chart__offline"[^>]*>31 yds left</);
+    });
+
+    it('calls a shot that lands within half a yard of the line on line', () => {
+      const html = render(makeShot({ trajectory: curving(0.4) }));
+
+      expect(html).toMatch(/flight-chart__offline"[^>]*>On the target line</);
+    });
+
+    it('draws right of the target line below it and left above it', () => {
+      const ballY = (html: string) => Number(html.match(/flight-chart__ball--top" cx="[\d.]+" cy="([\d.]+)"/)?.[1]);
+      const targetY = (html: string) => Number(html.match(/flight-chart__target"[^>]* y1="([\d.]+)"/)?.[1]);
+      const right = render(makeShot({ trajectory: curving(18) }));
+      const left = render(makeShot({ trajectory: curving(-18) }));
+
+      expect(ballY(right)).toBeGreaterThan(targetY(right));
+      expect(ballY(left)).toBeLessThan(targetY(left));
+    });
+
+    it('keeps its landing label on the far side of the ball from the target line', () => {
+      const labelY = (html: string) => Number(html.match(/flight-chart__offline" x="[\d.]+" y="([\d.]+)"/)?.[1]);
+      const ballY = (html: string) => Number(html.match(/flight-chart__ball--top" cx="[\d.]+" cy="([\d.]+)"/)?.[1]);
+      const right = render(makeShot({ trajectory: curving(3) }));
+      const left = render(makeShot({ trajectory: curving(-3) }));
+
+      expect(labelY(right)).toBeGreaterThan(ballY(right));
+      expect(labelY(left)).toBeLessThan(ballY(left));
+    });
+
+    it('moves that label inside when the ball finishes too near the edge of the strip', () => {
+      const labelY = (html: string) => Number(html.match(/flight-chart__offline" x="[\d.]+" y="([\d.]+)"/)?.[1]);
+      const ballY = (html: string) => Number(html.match(/flight-chart__ball--top" cx="[\d.]+" cy="([\d.]+)"/)?.[1]);
+      const right = render(makeShot({ trajectory: curving(7.5) }));
+      const left = render(makeShot({ trajectory: curving(-7.5) }));
+
+      expect(labelY(right)).toBeLessThan(ballY(right));
+      expect(labelY(right)).toBeGreaterThan(0);
+      expect(labelY(left)).toBeGreaterThan(ballY(left));
+      expect(labelY(left)).toBeLessThan(72);
+    });
+
+    it('labels its scale and widens it for the widest flight drawn', () => {
+      expect(render(makeShot())).toContain('± 10 yds');
+      expect(render(makeShot(), [makeShot({ trajectory: curving(34) })])).toContain('± 50 yds');
+    });
+
+    it('draws earlier flights as ghosts on the same scale', () => {
+      const html = render(makeShot(), [makeShot({ trajectory: curving(12) }), makeShot({ trajectory: null })]);
+
+      expect(polylinePointCount(html, 'flight-chart__ghost flight-chart__ghost--top')).toEqual([5]);
+    });
+
+    it('is left out when the direction was only estimated', () => {
+      const html = render(makeShot({ angle_source: 'estimated', launch_angle_horizontal_source: 'estimated' }));
+
+      expect(html).not.toContain('flight-view__top');
+      expect(html).toContain('<svg class="flight-chart"');
+    });
+
+    it('is left out when only the vertical launch was measured', () => {
+      const html = render(makeShot({ angle_source: 'radar', launch_angle_horizontal_source: 'estimated' }));
+
+      expect(html).not.toContain('flight-view__top');
+    });
+
+    it('shows a derived spin axis even when the start line was estimated', () => {
+      const html = render(
+        makeShot({ angle_source: 'estimated', launch_angle_horizontal_source: 'estimated', spin_axis_deg: 6 })
+      );
+
+      expect(html).toContain('flight-view__top');
+    });
+
+    it('holds its landing label back until the animated ball lands', () => {
+      const html = render(makeShot(), [], true);
+
+      expect(html).toContain('flight-view__top');
+      expect(html).not.toContain('flight-chart__offline');
+    });
+
+    it('is a short strip sized in rem that the side view gives way to', () => {
+      expect(css).toMatch(
+        /\.flight-view__top \{[^}]*flex: 0 0 auto;[^}]*height: clamp\([\d.]+rem, [\d.]+vh, [\d.]+rem\)/
+      );
+      expect(css).toMatch(/\.flight-chart__target \{[^}]*stroke-dasharray/);
+    });
+  });
+
   it('uses theme tokens and rem type for the chart', () => {
     expect(css).toMatch(/\.flight-chart__flight \{[^}]*stroke: var\(--color-accent\)/);
     expect(css).toMatch(/\.flight-chart__area \{[^}]*fill: color-mix\(in srgb, var\(--color-accent\)/);

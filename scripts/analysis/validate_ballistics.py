@@ -159,6 +159,13 @@ class TMShot:
     # yard-denominated distance columns. Kept in feet end to end so the
     # numbers stay comparable to the raw export.
     apex_feet: Optional[float] = None
+    # Club delivery, for the D-plane regression (tests/test_d_plane_trackman_regression.py).
+    attack_angle_deg: Optional[float] = None
+    club_path_deg: Optional[float] = None
+    face_angle_deg: Optional[float] = None
+    dynamic_loft_deg: Optional[float] = None
+    # "Measured" or "Estimate": TrackMan estimates spin when it cannot track it.
+    spin_rate_type: str = ""
 
 
 def _default_session_label(path: Path) -> str:
@@ -210,6 +217,11 @@ def load_trackman(path: Path, session: Optional[str] = None) -> List[TMShot]:
                 timestamp=row.get("Date", "") or "",
                 session=session_label,
                 apex_feet=_to_float(row.get("Max Height - Height")),
+                attack_angle_deg=_to_float(row.get("Attack Angle")),
+                club_path_deg=_to_float(row.get("Club Path")),
+                face_angle_deg=_to_float(row.get("Face Angle")),
+                dynamic_loft_deg=_to_float(row.get("Dyn. Loft")),
+                spin_rate_type=(row.get("Spin Rate Type") or "").strip(),
             ))
     return shots
 

@@ -1,0 +1,113 @@
+.phone-link__body {
+  flex: 1;
+  min-height: 0;
+  container-type: size;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xl);
+  padding: var(--space-md) 26px var(--space-lg);
+}
+
+/* As tall as the overlay allows, so a camera reads it from across the bay. */
+.phone-link .qr-code {
+  flex: 0 0 auto;
+  width: min(100cqh, 44cqw);
+  aspect-ratio: 1;
+  border-radius: var(--radius);
+}
+
+.phone-link__guide {
+  flex: 0 1 26rem;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.phone-link__steps {
+  margin: 0;
+  padding-left: 1.4em;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.3;
+}
+
+.phone-link__steps li::marker {
+  color: var(--color-accent);
+  font-weight: 700;
+}
+
+.phone-link__url,
+.phone-link__alternates,
+.phone-link__note {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.phone-link__url {
+  font-size: 1.125rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+}
+
+.phone-link__alternates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--space-sm);
+  font-size: 0.6875rem;
+  color: var(--color-text-muted);
+}
+
+.phone-link__alternates span {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.phone-link__note {
+  font-size: 0.6875rem;
+  color: var(--color-text-muted);
+}
+
+.phone-link__status {
+  max-width: 28rem;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-lg);
+  font-size: 0.9375rem;
+  font-weight: 500;
+  line-height: 1.35;
+  text-align: center;
+  color: var(--color-text-muted);
+}
+
+.phone-link__status p {
+  margin: 0;
+}
+
+@media (max-height: 640px) {
+  .phone-link__body {
+    padding: var(--space-sm) 18px var(--space-md);
+  }
+}
+
+@media (max-width: 640px) and (orientation: portrait) {
+  .phone-link__body {
+    flex-direction: column;
+    padding-inline: 16px;
+  }
+
+  .phone-link .qr-code {
+    width: min(100cqw, 50cqh);
+  }
+
+  .phone-link__guide {
+    flex: 0 1 auto;
+  }
+}

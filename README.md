@@ -34,6 +34,7 @@ Doppler radar, with an optional TI IWR6843 angle radar.
 - **Smash Factor**: Ball speed / club speed ratio
 - **Launch Angle**: Measured by the IWR6843; estimated when no trusted radar angle is available
 - **Club Path**: Experimental pre-impact estimate from the IWR6843
+- **Face Angle and Curve**: Derived from launch direction and club path (D-plane); curve for irons and wedges only by default
 - **Spin Rate**: Experimental candidate from rolling-buffer I/Q; not used for carry by default
 - **Carry Distance**: Ballistic model with explicit fallbacks for missing measurements
 
@@ -140,7 +141,8 @@ On Live, tap a metric to pin it top-left while keeping all metrics visible. Use
 the Replay action on camera-backed shots to open a touch-friendly slow-motion
 impact clip. The MP4 is generated only when Replay is selected and is cached
 beside the raw camera capture. For a TV or tablet, use
-[TV Display Mode](#tv-display-mode).
+[TV Display Mode](#tv-display-mode). To use it from a phone on the same Wi-Fi and
+add it to the home screen, see [Use it on your phone](docs/using/phone.md).
 
 ### 5. Sync to the cloud (optional)
 

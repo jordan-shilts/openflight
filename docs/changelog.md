@@ -8,6 +8,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Status light.** `--status-led-gpio <BCM>` drives one LED on the case so the
+  golfer at the ball knows when to swing: solid when a swing now is measured,
+  blinking (2 Hz) while the last swing is still being measured, off while
+  starting or stopped, after a radar error, or when the radar did not re-arm.
+  It follows the OPS243 capture loop, also waits out the IWR6843 dump when
+  `--iwr6843` is on, and in `--mock` stays solid unless a swing recorder
+  reports its own state. Pins the build already uses are refused at startup;
+  without gpiozero the server warns once and runs without it. Suggested wiring
+  is BCM 23 (physical pin 16) through 330 Ω to the LED, LED to GND on physical
+  pin 25; see [Status light](build/status-light.md).
+- **Draw and fade from the D-plane.** A new `openflight.d_plane` module derives
+  face angle, face-to-path, dynamic loft, spin loft and the spin axis from
+  measured launch and trusted club delivery. The camera-fused club path (tier
+  high or medium) now counts, so an IWR6843 + camera rig gets a spin axis and a
+  curving flight without a K-LD7. The spin axis replaces the earlier
+  `launch direction - club path` rule, which read about 40% of the true tilt on
+  an iron; against the committed TrackMan session the new one is within 0.6° on
+  the 7-iron and 0.1° on the pitching wedge. Drivers, woods and hybrids get no
+  spin axis unless `--wood-spin-axis` is passed, because their curve depends as
+  much on strike location, which nothing measures. See
+  [Curve: spin axis from the D-plane](how-it-works/ballistics.md#curve-spin-axis-from-the-d-plane).
+- **Club delivery to the simulator.** GSPro Open Connect shots now carry the
+  camera-fused club path (`ClubData.Path`) at tier high or medium, and the
+  derived `ClubData.FaceToTarget` and `ClubData.Loft`. The sim badges label
+  them Face and Loft.
+- **Top view on Flight.** When the ball's direction was measured, Live's Flight
+  view adds a strip under the side view showing the flight from above, the
+  target line, and how far left or right it landed.
+- **The touchscreen UI on your phone.** The menu behind the footer logo has an
+  **Open on your phone** screen with a QR code for the Pi's address
+  (`GET /api/phone-link`). The page now has a web app manifest and icons, so
+  Safari's **Add to Home Screen** opens it full screen, and every tab fits a
+  phone held upright. Same Wi-Fi only, plain HTTP, no login and no offline
+  mode; see [Use it on your phone](using/phone.md). On 800-wide kiosks the menu
+  is now two columns so the new button and Shut down fit without scrolling.
 - **Attack angle to the simulator.** A shot sent over GSPro Open Connect now
   carries the camera's experimental attack angle (`ClubData.AngleOfAttack`)
   when its confidence tier is high or medium; low and withheld estimates stay
@@ -40,6 +75,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [Security and scope](ios-ble.md#security-and-scope).
 
 ### Changed
+- **A simulator gets the spin the kiosk's carry ran on.** When spin is not
+  measured, the simulator connectors sent their own per-club table (a 7-iron at
+  7000 rpm) while the kiosk computed carry from the club-typical one (6500 rpm),
+  so the flight a simulator drew ran on a different spin than the Carry tile.
+  Both now call `ballistics.resolve_spin`. The largest moves are the hybrids
+  (800-900 rpm up) and 7-iron to lob wedge (500 rpm down). On the 22
+  TrackMan-measured shots in the repo the shared table's median error is 14%,
+  against 20% for the one it replaces.
 - **The OPS sound-trigger hardware test defaults to the Pi GPIO UART.**
   `scripts/hardware-test/test_sound_trigger.py` now uses `/dev/ttyAMA0`
   when `--port` is omitted. For USB, pass the device explicitly, for example

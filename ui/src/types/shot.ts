@@ -64,6 +64,17 @@ export interface Shot {
   experimental_camera_horizontal_status?: string | null;
   experimental_camera_iwr_delta_deg?: number | null;
   spin_axis_deg: number | null;
+  /**
+   * D-plane club delivery from the server, each present only when its inputs
+   * were measured and trusted. The Club tab derives its own display values
+   * (clubDelivery.ts); these are what drove ball flight and went to a simulator.
+   */
+  face_angle_deg?: number | null;
+  face_to_path_deg?: number | null;
+  dynamic_loft_deg?: number | null;
+  spin_loft_deg?: number | null;
+  delivery_club_path_source?: 'measured' | 'camera' | null;
+  delivery_attack_angle_source?: 'measured' | 'camera' | 'typical' | null;
   // Rolling buffer mode spin data
   spin_rpm: number | null;
   spin_confidence: number | null;

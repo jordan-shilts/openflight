@@ -51,8 +51,14 @@ from .clubs.physics import (
     get_club_physics,
     get_club_simulation_profile,
 )
+from .d_plane import estimate_club_delivery
 from .launch_monitor import SPIN_CONFIDENCE_HIGH, SPIN_CONFIDENCE_RELIABLE, Shot, summarize_shots
-from .measuring_status import MeasuringStatus, parse_report as parse_measuring_report
+from .measuring_status import (
+    OFFLINE,
+    READY,
+    MeasuringStatus,
+    parse_report as parse_measuring_report,
+)
 from .ops243 import (
     UART_BAUD_COMMANDS,
     Direction,
@@ -61,6 +67,7 @@ from .ops243 import (
     set_show_raw_readings,
 )
 from .phone_catch_up import PhoneShotCache, normalize_last_event_id, select_catch_up
+from .phone_link import phone_link
 from .phone_orientation import (
     PhoneOrientationMeasurement,
     PhoneOrientationValidationError,
@@ -87,6 +94,11 @@ from .sim import (
 from .speed_correction import correct_ball_speed
 from .spin_estimate import calculated_spin_rpm
 from .startup_status import StartupStatusReporter, configured_startup_components
+from .status_led import (
+    StatusLight,
+    check_pin as check_status_led_pin,
+    create_status_light,
+)
 from .swing_speed import SwingSpeedEvent
 
 # Configure logging
@@ -204,6 +216,31 @@ sim_player_state = SimPlayerState(shot_counter=initial_shot_counter())
 
 # Optional Bluetooth Low Energy publisher for the iOS app.
 ble_publisher = None
+
+# Optional front-panel status light (--status-led-gpio). None when not asked
+# for, or when the GPIO could not be driven. Each source below reports its own
+# readiness; the light shows the worst (see status_led.StatusLight).
+status_light: Optional[StatusLight] = None
+STATUS_SOURCE_MONITOR = "monitor"  # the OPS243 capture loop, mock or swing-speed monitor
+STATUS_SOURCE_IWR6843 = "iwr6843"  # the TI dump that follows the same sound edge
+STATUS_SOURCE_RECORDER = "recorder"  # the swing recorder feeding a --mock kiosk
+
+
+def _report_status_light(source: str, state: str) -> None:
+    """Tell the status light what ``source`` is doing, when a light is fitted."""
+    if status_light is not None:
+        status_light.report(source, state)
+
+
+def on_capture_readiness(state: str) -> None:
+    """The OPS243 capture loop is listening, measuring, or not listening."""
+    _report_status_light(STATUS_SOURCE_MONITOR, state)
+
+
+def on_iwr6843_status(state: str) -> None:
+    """The IWR6843 is armed, dumping a swing, or not accepting edges."""
+    _report_status_light(STATUS_SOURCE_IWR6843, state)
+
 
 # One Pi-owned selection is shared by the browser UI and every phone/tablet.
 # Monitors start on driver until ``_restore_saved_club`` applies the last pick,
@@ -478,6 +515,9 @@ def _cleanup_hardware_for_shutdown() -> bool:
             return False
         shutdown_cleanup_started = True
 
+    # First: the golfer must stop swinging as soon as shutdown begins.
+    if status_light is not None:
+        _run_shutdown_step("status light off", status_light.close)
     if kld7_vertical:
         _run_shutdown_step("K-LD7 vertical stop", kld7_vertical.stop)
     if kld7_horizontal:
@@ -987,6 +1027,10 @@ ball_speed_correction_enabled = False
 ball_speed_correction_distance_ft = 5.5
 ball_speed_correction_ball_above_radar_ft = -4.0 / 12.0
 calculated_spin_enabled = False
+# Derive a spin axis for drivers, woods and hybrids too. Off by default: an
+# off-centre strike on those clubs tilts the axis as much as the D-plane does
+# (gear effect), and nothing measures strike location. See openflight.d_plane.
+wood_spin_axis_enabled = False
 
 
 def shot_to_dict(shot: Shot) -> dict:
@@ -1268,6 +1312,13 @@ def api_club_selection():
     return apply_club_selection(request.get_json(silent=True))
 
 
+@app.route("/api/phone-link")
+def api_phone_link():
+    """Where a phone on the same network can open this UI (the kiosk's QR screen)."""
+    bind_host, port = request.server or (None, None)
+    return jsonify(phone_link(bind_host, port))
+
+
 @app.route("/<path:path>")
 def static_files(path):
     """Serve static files."""
@@ -1494,6 +1545,9 @@ def init_iwr6843(
                 if camera_capture_runtime is not None
                 else None
             ),
+            # A swing during the ~7 s TI dump gets no launch angle, so the
+            # status light keeps blinking until the dump completes.
+            status_callback=on_iwr6843_status,
         )
         # OPS initialization can pulse the shared sound gate. Configure TI now,
         # but do not accept edges until the OPS trigger path is fully running.
@@ -1961,7 +2015,18 @@ def _emit_measuring_status(payload: dict) -> None:
     socketio.emit("measuring_status", payload)
 
 
-measuring_status = MeasuringStatus(_emit_measuring_status)
+def _on_measuring_status_change(payload: dict) -> None:
+    """The recorder's state changed (or went stale): tell the screen and the light.
+
+    Only changes come here, never a reconnecting client's snapshot. Until the
+    recorder first reports, the light follows the mock monitor alone (solid);
+    from then on the recorder's ready/measuring/offline counts too.
+    """
+    _emit_measuring_status(payload)
+    _report_status_light(STATUS_SOURCE_RECORDER, payload["state"])
+
+
+measuring_status = MeasuringStatus(_on_measuring_status_change)
 
 
 @app.route("/api/shots/measuring", methods=["POST"])
@@ -3027,6 +3092,44 @@ def _sim_on_inbound(target: str, event) -> None:
             logger.info("[sim] ← %s ack: shot %s ok", target, event.shot_number)
 
 
+def _apply_club_delivery(shot: Shot) -> None:
+    """Fill face angle, lofts and spin axis from the D-plane (openflight.d_plane).
+
+    Runs once launch angles and club delivery are final, so a camera-fused
+    club path counts, and before carry so the trajectory curves with the axis.
+    Mock shots keep the direction their generator chose.
+    """
+    if shot.mode == "mock":
+        return
+    delivery = estimate_club_delivery(shot, include_gear_effect_clubs=wood_spin_axis_enabled)
+    shot.face_angle_deg = _round_or_none(delivery.face_angle_deg)
+    shot.face_to_path_deg = _round_or_none(delivery.face_to_path_deg)
+    shot.dynamic_loft_deg = _round_or_none(delivery.dynamic_loft_deg)
+    shot.spin_loft_deg = _round_or_none(delivery.spin_loft_deg)
+    shot.spin_axis_deg = _round_or_none(delivery.spin_axis_deg)
+    shot.delivery_club_path_source = delivery.club_path_source
+    shot.delivery_attack_angle_source = delivery.attack_angle_source
+    if shot.spin_axis_deg is not None:
+        logger.info(
+            "[SERVER] Spin axis: %+.1f° (face %+.1f°, path %+.1f° from %s, attack from %s)",
+            shot.spin_axis_deg,
+            delivery.face_angle_deg,
+            delivery.face_angle_deg - delivery.face_to_path_deg,
+            delivery.club_path_source,
+            delivery.attack_angle_source,
+        )
+    elif delivery.face_angle_deg is not None:
+        logger.info(
+            "[SERVER] Spin axis withheld: %s (face %+.1f°)",
+            delivery.spin_axis_withheld,
+            delivery.face_angle_deg,
+        )
+
+
+def _round_or_none(value: float | None) -> float | None:
+    return None if value is None else round(value, 1)
+
+
 def _apply_calculated_spin(shot: Shot) -> bool:
     """Replace radar-measured spin with the kinematic estimate.
 
@@ -3066,13 +3169,6 @@ ANGLE_CONFIDENCE_FLOOR = 0.55
 ANGLE_CONFIDENCE_CEILING = 0.95
 VERTICAL_SPREAD_FULL_CONFIDENCE_DEG = 2.0
 VERTICAL_SPREAD_ZERO_CONFIDENCE_DEG = 10.0
-
-# Spin axis is a difference of two experimental estimates (horizontal launch
-# minus club path); it should not appear the moment club path becomes
-# non-null, only once the weaker of the two legs (horizontal launch) clears
-# this bar.
-SPIN_AXIS_MIN_CONFIDENCE = 0.6
-
 
 def vertical_confidence(measurement) -> float:
     """Vertical launch confidence from channel agreement and corroboration.
@@ -3876,36 +3972,13 @@ def _enrich_shot_from_optional_hardware(shot: Shot) -> _ShotEnrichmentResult:
 
                 kld7_horizontal.reset()
 
-            # Derive spin axis from face angle (H. launch) minus club path.
-            # Both are experimental estimates; only trust the difference once
-            # the weaker leg (horizontal launch) clears a confidence floor,
-            # rather than emitting it the moment club path is non-null.
-            # club_path_deg can come from IWR6843 (_process_iwr6843_angle,
-            # above) rather than K-LD7, so a failure here is not necessarily
-            # a K-LD7 failure -- see the except block below.
-            if (
-                shot.launch_angle_horizontal is not None
-                and shot.club_path_deg is not None
-                and (shot.launch_angle_horizontal_confidence or 0.0) >= SPIN_AXIS_MIN_CONFIDENCE
-            ):
-                shot.spin_axis_deg = round(shot.launch_angle_horizontal - shot.club_path_deg, 1)
-                logger.info(
-                    "[SERVER] Spin axis: %+.1f° (face=%+.1f° - path=%+.1f°)",
-                    shot.spin_axis_deg,
-                    shot.launch_angle_horizontal,
-                    shot.club_path_deg,
-                )
-
             if kld7_vertical or kld7_horizontal:
                 kld7_ms = (time.time() - kld7_start) * 1000
                 logger.info("[SERVER] K-LD7 processing: %.1fms", kld7_ms)
     except Exception as e:
-        # Covers K-LD7 processing AND the spin-axis derivation above, which
-        # reads club_path_deg regardless of whether it came from K-LD7 or
-        # IWR6843 -- so this is not necessarily a K-LD7-specific failure.
-        logger.warning("[SERVER] Angle/spin-axis post-processing error: %s", e, exc_info=True)
+        logger.warning("[SERVER] Angle post-processing error: %s", e, exc_info=True)
         log_session_error(
-            "Angle/spin-axis post-processing failed",
+            "Angle post-processing failed",
             component="server",
             context={
                 "stage": "angle_postprocessing",
@@ -4001,6 +4074,7 @@ def _finalize_shot_detected(
     # Always emit user-facing launch angles. Radar/camera measurements win;
     # rejected or missing axes fall back to conservative estimates.
     _ensure_user_facing_launch_angles(shot)
+    _apply_club_delivery(shot)
 
     # Ball-speed cosine correction: the OPS reads the radial component of
     # a ball departing at the launch angle. Applied AFTER the K-LD7 (which
@@ -4788,17 +4862,21 @@ def start_monitor(
             event_callback=on_swing_speed_detected,
             live_callback=on_live_reading,
         )
+        # Speed reps stream continuously; there is no dump to wait out.
+        _report_status_light(STATUS_SOURCE_MONITOR, READY)
     elif not mock:
 
         def on_trigger_diagnostic(data: dict):
             """Forward trigger diagnostics to connected UI clients."""
             socketio.emit("trigger_diagnostic", data)
 
+        # The capture loop reports its own readiness from here on.
         monitor.start(  # pylint: disable=unexpected-keyword-arg
             shot_callback=on_shot_detected,
             live_callback=on_live_reading,
             diagnostic_callback=on_trigger_diagnostic,
             processing_callback=on_shot_processing,
+            readiness_callback=on_capture_readiness,
         )
         if iwr6843_runtime is not None:
             iwr6843_runtime.capture_monitor.arm()
@@ -4808,6 +4886,9 @@ def start_monitor(
             live_callback=on_live_reading,
             processing_callback=on_shot_processing,
         )
+        # Simulate shot is always available. A swing recorder that reports
+        # (POST /api/shots/measuring) adds its own state on top.
+        _report_status_light(STATUS_SOURCE_MONITOR, READY)
 
 
 def _cloud_raw_uploads_enabled() -> bool:
@@ -4899,6 +4980,9 @@ def _run_cloud_push_for_ui():
 def stop_monitor():
     """Stop the launch monitor."""
     global monitor, mock_swing_speed_mode  # pylint: disable=global-statement
+
+    # Before the (possibly slow) stop: nothing from here on is measured.
+    _report_status_light(STATUS_SOURCE_MONITOR, OFFLINE)
 
     # End session logging
     session_logger = get_session_logger()
@@ -5322,6 +5406,21 @@ def _add_battery_arguments(parser):
     )
 
 
+def _add_status_light_arguments(parser):
+    """Add the optional front-panel status light."""
+    parser.add_argument(
+        "--status-led-gpio",
+        type=int,
+        default=None,
+        metavar="BCM",
+        help=(
+            "BCM GPIO driving a front-panel status LED: solid when ready for a swing, "
+            "blinking while the last swing is measured, off when not ready. "
+            "Suggested: 23 (physical pin 16). Default: no LED"
+        ),
+    )
+
+
 def _apply_kld7_device_defaults(args, dev_root: Path = Path("/dev")) -> None:
     """Preserve kiosk symlink discovery while keeping CLI policy in the server."""
     vertical = dev_root / "kld7_vertical"
@@ -5488,6 +5587,7 @@ def main():
     )
     parser.add_argument("--no-logging", action="store_true", help="Disable session logging")
     _add_battery_arguments(parser)
+    _add_status_light_arguments(parser)
     parser.add_argument(
         "--sim",
         action="store_true",
@@ -5754,6 +5854,18 @@ def main():
         ),
     )
     parser.add_argument(
+        "--wood-spin-axis",
+        action="store_true",
+        help=(
+            "Also derive a spin axis (draw/fade curve) for drivers, woods and "
+            "hybrids. Off by default: an off-centre strike on those clubs tilts "
+            "the axis as much as face-to-path does, and strike location is not "
+            "measured, so the curve can be far out or reversed. Irons and wedges "
+            "always get one when launch direction and club path are trusted "
+            "(see src/openflight/d_plane.py)"
+        ),
+    )
+    parser.add_argument(
         "--kld7-mount-tilt",
         type=float,
         default=os.getenv("KLD7_MOUNT_TILT"),
@@ -5885,6 +5997,13 @@ def main():
     if args.ops_baud is not None and args.ops_baud not in UART_BAUD_COMMANDS:
         supported = ", ".join(str(b) for b in sorted(UART_BAUD_COMMANDS))
         parser.error(f"--ops-baud must be one of {supported} (got {args.ops_baud})")
+    # Driving a pin another part already uses could short a signal or toggle
+    # the UPS charger, so refuse before anything touches the GPIO.
+    if args.status_led_gpio is not None:
+        try:
+            check_status_led_pin(args.status_led_gpio, sound_trigger_pin=args.iwr6843_trigger_pin)
+        except ValueError as error:
+            parser.error(f"--status-led-gpio: {error}")
     global ballistics_enabled
     global battery_provider
     global profile_store
@@ -5900,6 +6019,8 @@ def main():
     _VERTICAL_RADAR_GATE_BYPASS = args.kld7_vertical_raw
     global calculated_spin_enabled
     calculated_spin_enabled = args.calculated_spin
+    global wood_spin_axis_enabled
+    wood_spin_axis_enabled = args.wood_spin_axis
     ballistics_enabled = args.ballistics
     battery_provider = args.battery
     profile_store = ProfileStore(args.profiles_path)
@@ -5932,6 +6053,16 @@ def main():
     print("  OpenFlight UI Server")
     print("=" * 50)
     print()
+
+    # Claimed before any hardware starts, switched off: the light stays dark
+    # until every reporting source says a swing would be measured.
+    global status_light  # pylint: disable=global-statement
+    if args.status_led_gpio is not None:
+        status_light = create_status_light(args.status_led_gpio)
+        if status_light is not None:
+            print(f"Status light: BCM{args.status_led_gpio}")
+        else:
+            print("Status light unavailable - running without it (see the warning above)")
 
     # Initialize session logger (enabled for both real and mock modes)
     if not args.no_logging:

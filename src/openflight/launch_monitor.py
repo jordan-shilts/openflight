@@ -304,6 +304,13 @@ class Shot:
         compare=False,
     )
     spin_axis_deg: Optional[float] = None  # Spin axis tilt: 0=backspin, +right(fade), -left(draw)
+    # D-plane club delivery (openflight.d_plane), each from trusted inputs only.
+    face_angle_deg: Optional[float] = None  # +open/right, -closed/left of target
+    face_to_path_deg: Optional[float] = None
+    dynamic_loft_deg: Optional[float] = None
+    spin_loft_deg: Optional[float] = None
+    delivery_club_path_source: Optional[str] = None  # "measured" or "camera"
+    delivery_attack_angle_source: Optional[str] = None  # "measured", "camera" or "typical"
     inclinometer: Optional[dict] = None  # Stable enclosure orientation used for this shot
     # UI side view only: kept out of to_dict(), so session logs and cloud uploads skip it.
     trajectory: Optional[dict] = field(default=None, repr=False)
@@ -447,6 +454,12 @@ class Shot:
             "experimental_camera_iwr_delta_deg": self.experimental_camera_iwr_delta_deg,
             "camera_replay": dict(self.camera_replay) if self.camera_replay else None,
             "spin_axis_deg": self.spin_axis_deg,
+            "face_angle_deg": self.face_angle_deg,
+            "face_to_path_deg": self.face_to_path_deg,
+            "dynamic_loft_deg": self.dynamic_loft_deg,
+            "spin_loft_deg": self.spin_loft_deg,
+            "delivery_club_path_source": self.delivery_club_path_source,
+            "delivery_attack_angle_source": self.delivery_attack_angle_source,
             "inclinometer": self.inclinometer,
             "spin_rpm": self.spin_rpm,
             "spin_rpm_measured": self.spin_rpm_measured,

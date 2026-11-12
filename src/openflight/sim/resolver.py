@@ -8,57 +8,20 @@ serialize the ResolvedShot into their own wire format.
 import math
 from typing import Dict, Tuple
 
-from openflight.clubs import ClubType
+from openflight.ballistics import resolve_spin
 from openflight.clubs.physics import get_club_physics
-from openflight.launch_monitor import (
-    SPIN_CONFIDENCE_HIGH,
-    Shot,
-)
+from openflight.d_plane import TRUSTED_DELIVERY_TIERS, trusted_club_path
+from openflight.launch_monitor import Shot
 from openflight.sim.types import IncompleteShotError, PlayerState, ResolvedShot
 
 # confidence tiers of the camera attack angle that are sent to a simulator
-SENDABLE_ATTACK_TIERS = ("high", "medium")
-
-# Temporary per-club spin model (rpm), used only when a measured spin is absent
-# or low-confidence. Slated for replacement by the shared ballistics spin model.
-SPIN_MODEL_RPM: Dict[ClubType, float] = {
-    ClubType.DRIVER: 2500.0,
-    ClubType.WOOD_3: 3000.0,
-    ClubType.WOOD_5: 3500.0,
-    ClubType.WOOD_7: 4000.0,
-    ClubType.HYBRID_3: 3500.0,
-    ClubType.HYBRID_5: 4000.0,
-    ClubType.HYBRID_7: 4500.0,
-    ClubType.HYBRID_9: 5000.0,
-    ClubType.IRON_2: 4000.0,
-    ClubType.IRON_3: 4500.0,
-    ClubType.IRON_4: 5000.0,
-    ClubType.IRON_5: 5500.0,
-    ClubType.IRON_6: 6000.0,
-    ClubType.IRON_7: 7000.0,
-    ClubType.IRON_8: 8000.0,
-    ClubType.IRON_9: 9000.0,
-    ClubType.PW: 9500.0,
-    ClubType.GW: 10000.0,
-    ClubType.SW: 10500.0,
-    ClubType.LW: 11000.0,
-    ClubType.PUTTER: 80.0,
-    ClubType.UNKNOWN: 5000.0,
-}
-
-_DEFAULT_SPIN_RPM = 5000.0
+SENDABLE_ATTACK_TIERS = TRUSTED_DELIVERY_TIERS
 
 
 def _resolve_total_spin(shot: Shot) -> Tuple[float, str]:
-    """Measured spin if present and high-confidence, else the per-club model."""
-    if (
-        shot.spin_rpm is not None
-        and shot.spin_rpm > 0
-        and shot.spin_confidence is not None
-        and shot.spin_confidence >= SPIN_CONFIDENCE_HIGH
-    ):
-        return float(shot.spin_rpm), "measured"
-    return SPIN_MODEL_RPM.get(shot.club, _DEFAULT_SPIN_RPM), "estimated"
+    """The spin the kiosk's carry ran on, with simulator provenance."""
+    spin_rpm, source = resolve_spin(shot)
+    return spin_rpm, "measured" if source == "measured" else "estimated"
 
 
 def resolve_shot(shot: Shot, player_state: PlayerState) -> ResolvedShot:
@@ -131,12 +94,23 @@ def resolve_shot(shot: Shot, player_state: PlayerState) -> ResolvedShot:
         club_speed = None
         provenance["club_speed"] = "estimated"
 
-    if shot.club_path_deg is not None:
-        club_path = float(shot.club_path_deg)
+    # A club radar's path, or the camera's fused one at a trusted tier: the same
+    # path that drives the spin axis, so a simulator's club card and its ball
+    # flight agree.
+    path = trusted_club_path(shot)
+    if path is not None:
+        club_path = path[0]
         provenance["club_path"] = "measured"
     else:
         club_path = 0.0
         provenance["club_path"] = "estimated"
+
+    # D-plane face angle and dynamic loft are derived from measured launch and
+    # trusted delivery (openflight.d_plane); absent means an input was missing.
+    face_angle = None if shot.face_angle_deg is None else float(shot.face_angle_deg)
+    provenance["face_angle"] = "measured" if face_angle is not None else "estimated"
+    dynamic_loft = None if shot.dynamic_loft_deg is None else float(shot.dynamic_loft_deg)
+    provenance["dynamic_loft"] = "measured" if dynamic_loft is not None else "estimated"
 
     # The camera's fused attack angle is experimental: a simulator gets it only when
     # its confidence tier is high or medium (low and withheld stay home), so a sim
@@ -163,5 +137,7 @@ def resolve_shot(shot: Shot, player_state: PlayerState) -> ResolvedShot:
         club=shot.club,
         club_speed_mph=club_speed,
         attack_angle_deg=attack_angle,
+        face_angle_deg=face_angle,
+        dynamic_loft_deg=dynamic_loft,
         provenance=provenance,
     )
