@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Shot latency tools.** Three scripts in `scripts/analysis/` show where the
+  time between impact and the screen goes, without changing anything on the
+  rig. `bench_shot_pipeline.py` times every CPU stage of a shot and the fixed
+  waits around the radar, on recorded or synthetic captures, with no hardware.
+  `shot_latency_report.py` reads session logs and lays each real shot out as a
+  timeline from the trigger. `bench_sim_link.py` connects to a simulator with
+  the server's own connector and times the connection, heartbeats and, only
+  when asked with `--shots`, test shots. See
+  [Shot latency](development/performance.md).
 - **Attack angle to the simulator.** A shot sent over GSPro Open Connect now
   carries the camera's experimental attack angle (`ClubData.AngleOfAttack`)
   when its confidence tier is high or medium; low and withheld estimates stay
@@ -40,6 +49,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [Security and scope](ios-ble.md#security-and-scope).
 
 ### Changed
+- **Carry simulation runs 1.7 times as fast.** The flight integrator steps in
+  plain numbers instead of building a tuple per stage (it runs four times per
+  2 ms of ball flight, about 13,000 times for a drive). Measured on a cloud
+  Linux VM, a drive's flight went from 26 ms to 15 ms; not yet timed on a Pi.
+  The results are bit-for-bit the same, checked over 6,912 launches, and six
+  flights are now pinned in the tests so a later change to the integration has
+  to be deliberate.
 - **The OPS sound-trigger hardware test defaults to the Pi GPIO UART.**
   `scripts/hardware-test/test_sound_trigger.py` now uses `/dev/ttyAMA0`
   when `--port` is omitted. For USB, pass the device explicitly, for example

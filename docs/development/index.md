@@ -18,6 +18,11 @@ is not part of the production path.
 
     The dechirped-sideband spin estimator test bench.
 
+- :material-timer-outline: **[Shot latency](performance.md)**
+
+    Where the time between impact and the screen goes, and how to measure it
+    on your own rig.
+
 - :material-camera-outline: **[Camera & YOLO](camera-yolo.md)**
 
     Experimental vision work. Disabled in the production kiosk.

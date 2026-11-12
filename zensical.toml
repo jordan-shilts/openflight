@@ -104,6 +104,7 @@ nav = [
     "development/index.md",
     "development/firmware.md",
     "development/spin-replay.md",
+    "development/performance.md",
     "development/camera-yolo.md",
     "development/color-palette.md",
   ] },
