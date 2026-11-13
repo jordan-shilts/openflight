@@ -162,6 +162,64 @@ def test_inbound_putter_from_the_green_switches_the_active_club(server, monkeypa
     assert changes == [{"club": "putter"}]
 
 
+def test_inbound_update_without_a_club_keeps_the_picked_club(server, monkeypatch):
+    """A distance-only player update must not undo the club picked on the Pi.
+
+    2026-11-13: Open-Birdie sends DistanceToTarget alone after every shot. The
+    server re-applied the sim's last club (3-hybrid) each time, so an 8-iron or
+    5-iron picked on the kiosk snapped back after the next shot.
+    """
+    from openflight.gspro.codec import GSProCodec
+
+    set_clubs = []
+    fake_monitor = type("M", (), {"set_club": lambda self, c: set_clubs.append(c)})()
+    monkeypatch.setattr(server, "monitor", fake_monitor)
+    greeting = b'{"Code":201,"Message":"GSPro Player Information","Player":{"Handed":"RH","Club":"H3"}}'
+    for event in GSProCodec().parse_inbound(greeting):
+        server._sim_on_inbound("gspro", event)
+    assert server.active_club is ClubType.HYBRID_3
+
+    monkeypatch.setattr(server, "active_club", ClubType.IRON_5)  # picked on the kiosk
+    distance_only = b'{"Code":201,"Message":"GSPro Player Information","Player":{"Handed":"RH","DistanceToTarget":180}}'
+    for event in GSProCodec().parse_inbound(distance_only):
+        server._sim_on_inbound("gspro", event)
+
+    assert server.active_club is ClubType.IRON_5
+    assert set_clubs == [ClubType.HYBRID_3]
+
+
+class _ClubListener:
+    def __init__(self):
+        self.shared = []
+
+    def share_club(self, club):
+        self.shared.append(club)
+
+
+def test_club_picked_on_the_pi_is_shared_with_simulators(server, monkeypatch):
+    listener = _ClubListener()
+    server.sim_connectors = [listener]
+    fake_monitor = type("M", (), {"set_club": lambda self, c: None})()
+    monkeypatch.setattr(server, "monitor", fake_monitor)
+    monkeypatch.setattr(server, "save_club", lambda club: None, raising=False)
+
+    server.apply_club_selection({"club": "5-iron"})
+
+    assert listener.shared == [ClubType.IRON_5]
+
+
+def test_club_from_a_simulator_is_shared_back_with_simulators(server, monkeypatch):
+    listener = _ClubListener()
+    server.sim_connectors = [listener]
+    fake_monitor = type("M", (), {"set_club": lambda self, c: None})()
+    monkeypatch.setattr(server, "monitor", fake_monitor)
+
+    server._sim_on_inbound("gspro", PlayerUpdate(club=ClubType.IRON_8))
+    server._sim_on_inbound("gspro", PlayerUpdate(handed="RH"))
+
+    assert listener.shared == [ClubType.IRON_8]
+
+
 def test_inbound_error_emits_status(server):
     server._sim_on_inbound("opengolfsim", SimError(message="boom"))
     errs = [a_ for a_, k in server._emitted

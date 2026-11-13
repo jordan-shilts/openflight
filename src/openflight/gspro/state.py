@@ -31,6 +31,14 @@ _GSPRO_CLUB_MAP = {
 }
 
 
+_CLUB_GSPRO_CODE = {club: code for code, club in _GSPRO_CLUB_MAP.items()}
+
+
+def club_to_gspro_code(club: ClubType) -> str | None:
+    """Map a ClubType to its GSPro club code (e.g. 'I7'); None when GSPro has none."""
+    return _CLUB_GSPRO_CODE.get(club)
+
+
 def gspro_code_to_club(code: str) -> ClubType:
     """Map a GSPro club code (e.g. 'DR', 'I7') to ClubType. Unknown -> UNKNOWN."""
     club = _GSPRO_CLUB_MAP.get(code)

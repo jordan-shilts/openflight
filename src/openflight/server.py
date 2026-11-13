@@ -1233,6 +1233,7 @@ def _restore_saved_club() -> None:
             logger.exception("[SERVER] Could not restore the saved club %s", saved.value)
             return
         active_club = saved
+    _share_club_with_sims(saved)
     logger.info("[SERVER] Restored the saved club: %s", saved.value)
 
 
@@ -1243,9 +1244,18 @@ def current_club_selection(_payload=None):
     return {"status": "current", "club": club_value}, 200
 
 
+def _share_club_with_sims(club: ClubType) -> None:
+    """Pass the club in play to the simulator connectors (see GSProCodec.share_club)."""
+    for connector in sim_connectors:
+        share = getattr(connector, "share_club", None)
+        if share is not None:
+            share(club)
+
+
 def _broadcast_club_selection(club: ClubType) -> None:
     """Fan one authoritative club update out over every active transport."""
     club_data = {"club": club.value}
+    _share_club_with_sims(club)
     try:
         socketio.emit("club_changed", club_data)
     except Exception:  # pylint: disable=broad-exception-caught
@@ -3061,7 +3071,10 @@ def _sim_on_inbound(target: str, event) -> None:
     if isinstance(event, PlayerUpdate):
         sim_player_state.apply(event)
         club_value = sim_player_state.club.value
-        logger.info("[sim] ← %s player update: club=%s", target, club_value)
+        if event.club is None:
+            logger.info("[sim] ← %s player update without a club", target)
+        else:
+            logger.info("[sim] ← %s player update: club=%s", target, club_value)
         socketio.emit(
             "sim_player",
             {"target": target, "handed": sim_player_state.handed, "club": club_value},
@@ -3069,6 +3082,10 @@ def _sim_on_inbound(target: str, event) -> None:
         sl = get_session_logger()
         if sl:
             sl.log_sim_player(target=target, handed=sim_player_state.handed, club=club_value)
+        if event.club is None:
+            # A distance-only update (Open-Birdie after every shot) names no
+            # club; re-applying the sim's last one undid a pick made on the Pi.
+            return
         # The monitor owns current-club state for shot tagging and carry/spin
         # model selection; keep it in sync with the sim's canonical club.
         with club_selection_lock:
@@ -6332,6 +6349,7 @@ def main():
     sim_connectors = build_connectors(
         sim_cfgs, on_status=_sim_on_status, on_inbound=_sim_on_inbound
     )
+    _share_club_with_sims(active_club)
     for connector in sim_connectors:
         connector.start()
         print(f"Simulator connector enabled: {connector.name} -> {connector.host}:{connector.port}")

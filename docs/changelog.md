@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Club sync with Open-Birdie.** The club picked on the kiosk or phone now shows
+  in Open-Birdie too, and a club picked there still comes here. To a simulator
+  that names itself (Open-Birdie does; GSPro never does), heartbeats and shots
+  carry the club in play as `ClubName`, a GSPro code such as `I5`. GSPro keeps
+  receiving the spec payload byte for byte.
 - **Status light.** `--status-led-gpio <BCM>` drives one LED on the case so the
   golfer at the ball knows when to swing: solid when a swing now is measured,
   blinking (2 Hz) while the last swing is still being measured, off while
@@ -101,6 +106,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [Electron Kiosk Shell](electron-kiosk-shell.md#browser-local-state-breaking-on-first-electron-launch).
 
 ### Fixed
+- **A club picked on the Pi stays picked.** Open-Birdie sends the distance to the
+  target alone after every shot, and the server re-applied the simulator's last
+  club with it, so an 8-iron picked on the kiosk went back to the 3-hybrid after
+  the next shot. A player update without a club now leaves the club alone.
 - **The IWR6843 no longer reads the clubhead as the ball.** After impact the
   clubhead follows the ball into the radar's gate a few milliseconds later,
   at about half its speed, and as the bigger reflector it takes most of the

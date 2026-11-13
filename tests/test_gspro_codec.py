@@ -162,3 +162,40 @@ def test_parse_inbound_reports_a_named_peer_before_the_event():
     assert [type(e).__name__ for e in player] == ["PeerInfo", "PlayerUpdate"]
     plain = GSProCodec().parse_inbound(json.dumps({"Code": 200, "Message": "ok"}).encode())
     assert not any(isinstance(e, PeerInfo) for e in plain), "real GSPro: no peer name"
+
+
+def _named_peer_codec(name="Open-Birdie"):
+    codec = GSProCodec()
+    codec.parse_inbound(json.dumps({"Code": 200, "Message": "ok", "Simulator": name}).encode())
+    return codec
+
+
+def test_shot_names_its_club_only_to_a_sim_that_named_itself():
+    """Open-Birdie reads ClubName; GSPro's own messages never name a simulator,
+    so GSPro keeps receiving exactly the spec payload."""
+    assert "ClubName" not in _build(GSProCodec(), _resolved(club=ClubType.IRON_5))
+    named = _build(_named_peer_codec(), _resolved(club=ClubType.IRON_5))
+    assert named["ClubName"] == "I5"
+    unknown = _build(_named_peer_codec(), _resolved(club=ClubType.UNKNOWN))
+    assert "ClubName" not in unknown
+
+
+def test_heartbeat_carries_the_shared_club_to_a_named_sim():
+    codec = GSProCodec()
+    codec.share_club(ClubType.IRON_8)
+    assert "ClubName" not in json.loads(codec.heartbeat_bytes())
+    named = _named_peer_codec()
+    named.share_club(ClubType.IRON_8)
+    beat = json.loads(named.heartbeat_bytes())
+    assert beat["ClubName"] == "I8"
+    assert beat["ShotDataOptions"]["IsHeartBeat"] is True
+    named.share_club(ClubType.UNKNOWN)
+    assert "ClubName" not in json.loads(named.heartbeat_bytes())
+
+
+def test_every_club_with_a_gspro_code_round_trips():
+    from openflight.gspro.state import club_to_gspro_code, gspro_code_to_club
+
+    for code in ("DR", "W3", "H3", "I5", "I9", "PW", "SW", "PT"):
+        assert club_to_gspro_code(gspro_code_to_club(code)) == code
+    assert club_to_gspro_code(ClubType.UNKNOWN) is None

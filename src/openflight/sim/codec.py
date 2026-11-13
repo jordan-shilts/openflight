@@ -67,6 +67,12 @@ class SimConnector:
     def is_connected(self) -> bool:
         return self._client.is_connected()
 
+    def share_club(self, club) -> None:
+        """Tell the codec the club in play, for codecs that pass it on."""
+        share = getattr(self.codec, "share_club", None)
+        if share is not None:
+            share(club)
+
     @property
     def state(self):
         return self._client.state

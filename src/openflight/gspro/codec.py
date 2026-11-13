@@ -7,6 +7,7 @@ Spec: https://gsprogolf.com/GSProConnectV1.html
 
 from typing import List, Optional
 
+from openflight.clubs import ClubType
 from openflight.gspro.messages import (
     BallData,
     ClubData,
@@ -16,7 +17,7 @@ from openflight.gspro.messages import (
     parse_response,
     serialize_payload,
 )
-from openflight.gspro.state import gspro_code_to_club
+from openflight.gspro.state import club_to_gspro_code, gspro_code_to_club
 from openflight.sim.types import (
     InboundEvent,
     PeerInfo,
@@ -55,6 +56,20 @@ class GSProCodec:
         self.name = name
         self.device_id = device_id
         self.units = units
+        # A sim that names itself in its replies (Open-Birdie) also takes the club
+        # in play as ClubName, so both sides show the same club. GSPro never
+        # names itself and keeps receiving the spec payload.
+        self._peer_named = False
+        self._club: Optional[ClubType] = None
+
+    def share_club(self, club: Optional[ClubType]) -> None:
+        """Remember the club in play for the heartbeat to carry."""
+        self._club = club
+
+    def _club_name(self, club: Optional[ClubType]) -> Optional[str]:
+        if not self._peer_named or club is None:
+            return None
+        return club_to_gspro_code(club)
 
     def build_shot(self, resolved: ResolvedShot) -> bytes:
         has_club_speed = resolved.club_speed_mph is not None
@@ -90,6 +105,7 @@ class GSProCodec:
                 LaunchMonitorBallDetected=True,
                 IsHeartBeat=False,
             ),
+            ClubName=self._club_name(resolved.club),
         )
         return serialize_payload(payload)
 
@@ -97,6 +113,8 @@ class GSProCodec:
         resp = parse_response(frame)  # raises ValueError on malformed JSON
         # a GSPro-compatible sim that names itself (e.g. Open-Birdie)
         events: List[InboundEvent] = [PeerInfo(name=resp.Simulator)] if resp.Simulator else []
+        if resp.Simulator:
+            self._peer_named = True
         if resp.Code == 201 and resp.Player:
             events.append(
                 PlayerUpdate(
@@ -113,7 +131,9 @@ class GSProCodec:
         return events
 
     def heartbeat_bytes(self) -> Optional[bytes]:
-        return build_heartbeat(self.device_id, self.units, shot_number=0)
+        return build_heartbeat(
+            self.device_id, self.units, shot_number=0, club_name=self._club_name(self._club)
+        )
 
     def on_connect_bytes(self) -> Optional[bytes]:
         return None
