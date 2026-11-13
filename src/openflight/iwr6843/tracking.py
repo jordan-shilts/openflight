@@ -29,6 +29,16 @@ SPEED_BOUNDS_MS = (20.0, 90.0)
 FAST_TRACK_MS = 26.5  # RADIAL m/s: slowest real SW ball reads ~27.5
 #                               (66 mph x cos projection); flying tee ~25
 FAST_SUPPORT_FRAC = 0.55  # of the most-inliers candidate
+# The post-impact clubhead can also take the track from the ball it trails:
+# it is the bigger reflector, each gate keeps one peak per loop, and it
+# enters the gate a few ms after the ball and lingers there. 2026-11-13
+# basement rig (3-hybrid, radar 1.6 m behind the ball): 14 of 21 swings read
+# the clubhead at about half ball speed while the ball's own track held only
+# 19-53% of its inliers. The ball always leaves first, so with
+# ``leading_fast_wins`` a fast track already moving before the slow one
+# starts wins on modest support of its own.
+LEADING_FAST_MIN_INLIERS = 12
+LEADING_FAST_MIN_SPAN_S = 0.009  # three 3 ms frames
 MAX_RADIAL_ACCEL = 200.0  # m/s^2 sanity for the quadratic refit
 
 
@@ -276,6 +286,18 @@ def _detections(
     return np.asarray(loops_idx), np.asarray(bins)
 
 
+def _leaves_first(fast: tuple, slow: tuple) -> bool:
+    """Whether a fast candidate is a usable track already moving before the
+    slow one starts. Candidates are (inliers, slope, intercept, rms, t_first,
+    t_last). A ragged winner is still flagged by BallTrack.low_confidence."""
+    n_inliers, _slope, _intercept, _rms, t_first, t_last = fast
+    return (
+        n_inliers >= LEADING_FAST_MIN_INLIERS
+        and t_last - t_first >= LEADING_FAST_MIN_SPAN_S
+        and t_first < slow[4]
+    )
+
+
 def find_ball(
     mti: np.ndarray,
     geo: Geometry,
@@ -287,6 +309,7 @@ def find_ball(
     gates_m: tuple[tuple[float, float], ...] = BALL_GATES_M,
     speed_bounds_ms: tuple[float, float] = SPEED_BOUNDS_MS,
     time_window_s: tuple[float, float] | None = None,
+    leading_fast_wins: bool = False,
 ) -> BallTrack | None:
     """RANSAC a range walk inside ``gates_m``/``speed_bounds_ms``; None when
     no plausible streak exists.
@@ -297,6 +320,11 @@ def find_ball(
     ``min_ball_ms`` is the slowest RADIAL speed a real ball can read for
     the club in play (see shot.CLUB_POLICY) — it must sit above the
     class's post-impact club/tee speeds or they steal the track.
+
+    ``leading_fast_wins`` (the ball search sets it) also lets the best fast
+    candidate win with less support when it starts before the slow winner
+    and is itself a usable track: the ball leaves the tee ahead of the
+    clubhead that later outscores it (see LEADING_FAST_*).
 
     Defaults reproduce the ball search. The club estimator passes its own
     (closer, slower) ``gates_m``/``speed_bounds_ms``; because the club's
@@ -351,12 +379,10 @@ def find_ball(
     if best is None:
         return None
     pick = best
-    if (
-        best_fast is not None
-        and best[1] * res < min_ball_ms
-        and best_fast[0] >= FAST_SUPPORT_FRAC * best[0]
-    ):
-        pick = best_fast
+    if best_fast is not None and best[1] * res < min_ball_ms:
+        supported = best_fast[0] >= FAST_SUPPORT_FRAC * best[0]
+        if supported or (leading_fast_wins and _leaves_first(best_fast, best)):
+            pick = best_fast
     n_inl, slope, icpt, rms, t_first, t_last = pick
     # quadratic refit of the picked track's inliers: local radial speed
     inl = np.abs(bins - (slope * times + icpt)) < tol

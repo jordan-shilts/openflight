@@ -359,7 +359,9 @@ def process_dump(
     max_r = (net_range_m - 0.25) if net_range_m else None
     klass = club_class(club)
     min_ms = CLUB_MIN_BALL_MS[klass]
-    track = tracking.find_ball(mti, geo, max_range_m=max_r, min_ball_ms=min_ms)
+    track = tracking.find_ball(
+        mti, geo, max_range_m=max_r, min_ball_ms=min_ms, leading_fast_wins=True
+    )
 
     notch_used = False
     if track_broken(track) or (track is not None and near_mti_notch(track.speed_ms)):
@@ -367,7 +369,9 @@ def process_dump(
         # range walk; the window-scope filter keeps them (statics still
         # cancel over the full window)
         mti_w = prepared.mti("window")
-        track_w = tracking.find_ball(mti_w, geo, max_range_m=max_r, min_ball_ms=min_ms)
+        track_w = tracking.find_ball(
+            mti_w, geo, max_range_m=max_r, min_ball_ms=min_ms, leading_fast_wins=True
+        )
         if not track_broken(track_w) and (
             track_broken(track)
             or track_w.rms_bins < track.rms_bins

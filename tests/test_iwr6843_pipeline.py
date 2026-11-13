@@ -640,6 +640,84 @@ def test_fastest_credible_track_beats_slow_theft():
     assert track.speed_ms == pytest.approx(60.0, abs=3.0)
 
 
+def _ball_and_clubhead_cube(movers, *, n_frames=16, n_loops=16, n_samples=128, seed=3):
+    """Movers ``(x0_m, speed_ms, amp, t_start_s)`` on the 16 x 3 ms ball profile."""
+    rng = np.random.default_rng(seed)
+    res = RANGE_SPAN_M / n_samples
+    cube = np.zeros((n_frames, 2 * n_loops, 4, n_samples), dtype=complex)
+    samples = np.arange(n_samples)
+    for slot in range(n_frames):
+        for loop in range(n_loops):
+            t_s = slot * 0.003 + loop * LOOP_PRI_S
+            for x0_m, speed_ms, amp, t_start_s in movers:
+                if t_s < t_start_s:
+                    continue
+                x_m = x0_m + speed_ms * (t_s - t_start_s)
+                rbin = x_m / res
+                if rbin >= n_samples - 2:
+                    continue
+                tone = amp * np.exp(2j * np.pi * rbin * samples / n_samples)
+                dopp = np.exp(1j * 4 * np.pi * (x_m - 1.0) / LAM)
+                cube[slot, 2 * loop] += dopp * tone
+                cube[slot, 2 * loop + 1] += dopp * tone
+    cube += (rng.standard_normal(cube.shape) + 1j * rng.standard_normal(cube.shape)) * 6.0
+    return pack_dump(cube, n_tx=2, version=3, frame_period_us=3000)
+
+
+def test_ball_that_leaves_first_beats_stronger_clubhead(cal):
+    """The ball leaves the tee first; the clubhead must not take its track.
+
+    2026-11-13 basement rig (3-hybrid, ~104 mph): on 14 of 21 swings the
+    post-impact clubhead (about half ball speed, a bigger reflector) followed
+    the ball into the gate a few ms later and outscored it, because the gate
+    keeps one peak per loop and the clubhead's is stronger. The ball's track
+    held only 19-53% of the clubhead's inliers, under FAST_SUPPORT_FRAC, so
+    the swing read 47-62 mph.
+    """
+    raw = _ball_and_clubhead_cube(
+        [
+            (2.0, 46.5, 300.0, 0.0),  # ball
+            (2.0, 23.0, 900.0, 0.0),  # clubhead after impact
+        ]
+    )
+    shot = process_dump(raw, cal, two_ray=False, club="3-hybrid")
+    assert shot.ball_found and shot.track is not None
+    assert shot.track.speed_ms == pytest.approx(46.5, abs=2.0)
+
+
+def test_leading_fast_rule_is_opt_in():
+    """Only the ball search turns the rule on; the club estimator's own
+    find_ball calls keep the support-fraction rule alone."""
+    from openflight.iwr6843.shot import geometry_from_header as gfh
+    from openflight.iwr6843.tracking import find_ball, mti_filter
+
+    raw = _ball_and_clubhead_cube([(2.0, 46.5, 300.0, 0.0), (2.0, 23.0, 900.0, 0.0)])
+    _meta, cube = parse_dump(raw)
+    geo = gfh(parse_header(raw))
+    mti = mti_filter(cube)
+    assert find_ball(mti, geo, min_ball_ms=40.0).speed_ms == pytest.approx(23.0, abs=2.0)
+    leading = find_ball(mti, geo, min_ball_ms=40.0, leading_fast_wins=True)
+    assert leading.speed_ms == pytest.approx(46.5, abs=2.0)
+    assert leading.t_first < 0.006
+
+
+def test_fast_track_that_starts_after_the_slow_one_does_not_override(cal):
+    """Only a fast track that is already moving first may outrank support.
+
+    A fast streak that shows up after the slow object is not the ball leaving
+    the tee, so the most-supported track keeps the swing as before.
+    """
+    raw = _ball_and_clubhead_cube(
+        [
+            (2.0, 23.0, 900.0, 0.0),  # lingering slow object
+            (2.6, 45.0, 300.0, 0.024),  # fast streak appearing mid-window
+        ]
+    )
+    shot = process_dump(raw, cal, two_ray=False, club="3-hybrid")
+    assert shot.ball_found and shot.track is not None
+    assert shot.track.speed_ms == pytest.approx(23.0, abs=2.0)
+
+
 def test_local_velocity_on_accelerating_ball(cal):
     """Quadratic refit exposes the instantaneous radial speed."""
     raw = synth_shot(speed_ms=40.0, accel_ms2=60.0, noise=4.0)

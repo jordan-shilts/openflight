@@ -101,6 +101,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [Electron Kiosk Shell](electron-kiosk-shell.md#browser-local-state-breaking-on-first-electron-launch).
 
 ### Fixed
+- **The IWR6843 no longer reads the clubhead as the ball.** After impact the
+  clubhead follows the ball into the radar's gate a few milliseconds later,
+  at about half its speed, and as the bigger reflector it takes most of the
+  gate's peaks. When the ball's own track held under 55% of the clubhead's
+  points, the swing read half speed (a 3-hybrid struck at about 104 mph read
+  47-62 mph on 14 of 21 swings). The ball search now also takes the fast
+  track when it starts before the slow one and has at least 12 points over
+  9 ms, since the ball always leaves first. Replayed on 173 saved swings, 20
+  change, all from half speed to 95-129 mph, and none get worse. The club
+  estimator's searches are unchanged.
 - **Simulator output tags estimated launch angles as estimated.** When the
   server fills in a launch angle before the sim fan-out, the resolver tagged
   it, and the carry built on it, as measured. It now reads the angle's source,
