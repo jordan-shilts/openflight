@@ -74,6 +74,23 @@ def near_mti_notch(speed_ms: float, half_width_ms: float = NOTCH_HALF_WIDTH_MS) 
 REJECT_RMS_BINS = 0.50
 REJECT_MIN_INLIERS = 28
 REJECT_MIN_SPAN_S = 0.015
+# ...but a clean ball seen for most of the capture can hold fewer points
+# without being junk: it shares each gate's one-peak-per-loop with the
+# clubhead. 2026-11-13 basement rig, 5-iron: 100-107 mph balls on 14-27
+# points (rms 0.37-0.45) across 34-46 ms were all thrown out by the floor
+# above. Short thin tracks stay out (the half-speed clubhead reads live there).
+THIN_TRACK_MIN_INLIERS = 14
+THIN_TRACK_MIN_SPAN_S = 0.030
+
+
+def thin_but_whole(trk: BallTrack | None) -> bool:
+    """A track under the inlier floor that is still a clean, long ball read."""
+    return (
+        trk is not None
+        and trk.rms_bins < REJECT_RMS_BINS
+        and trk.n_inliers >= THIN_TRACK_MIN_INLIERS
+        and (trk.t_last - trk.t_first) >= THIN_TRACK_MIN_SPAN_S
+    )
 
 
 def track_broken(trk: BallTrack | None) -> bool:
@@ -389,7 +406,9 @@ def process_dump(
     )
     if track is None:
         return result
-    if track_broken(track):
+    # the notch retry above still compares on the full floor; only the final
+    # verdict lets a thin but whole ball through
+    if track_broken(track) and not thin_but_whole(track):
         result.quality = "reject"
         return result
     if track.low_confidence:

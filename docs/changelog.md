@@ -106,6 +106,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [Electron Kiosk Shell](electron-kiosk-shell.md#browser-local-state-breaking-on-first-electron-launch).
 
 ### Fixed
+- **A clean ball read on fewer points is no longer thrown out.** The IWR6843
+  rejected every ball track under 28 points. A ball the radar sees across
+  most of the capture can hold fewer, because the clubhead takes some of each
+  gate's peaks: on 2026-11-13 eight 5-iron swings read 90-107 mph on 14-27
+  clean points and none reached the screen. A track of 14 or more points that
+  spans at least 30 ms with rms under 0.50 bins now passes; short thin tracks,
+  where half-speed clubhead reads live, are still rejected. Replayed on 157
+  saved swings: 21 more shown (19 at 90-112 mph), none lost.
 - **A club picked on the Pi stays picked.** Open-Birdie sends the distance to the
   target alone after every shot, and the server re-applied the simulator's last
   club with it, so an 8-iron picked on the kiosk went back to the 3-hybrid after

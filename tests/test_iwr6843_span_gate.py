@@ -44,3 +44,22 @@ def test_track_broken_still_enforces_rms_and_inliers():
 def test_result_exposes_track_span():
     payload = LCMFResult(status="accepted", track_span_s=0.0331).to_dict()
     assert payload["track_span_s"] == 0.0331
+
+
+def test_thin_ball_seen_across_the_capture_is_not_junk():
+    """2026-11-13 5-iron swings: 100-107 mph on 14-27 clean points over 34-46 ms."""
+
+    class FakeTrack:
+        def __init__(self, inliers, span_s, rms=0.40):
+            self.rms_bins = rms
+            self.n_inliers = inliers
+            self.t_first = 0.003
+            self.t_last = 0.003 + span_s
+
+    assert shotmod.track_broken(FakeTrack(23, 0.043)) is True    # under the full floor
+    assert shotmod.thin_but_whole(FakeTrack(23, 0.043)) is True  # but a whole, clean read
+    assert shotmod.thin_but_whole(FakeTrack(14, 0.030)) is True
+    assert shotmod.thin_but_whole(FakeTrack(13, 0.043)) is False  # too few points
+    assert shotmod.thin_but_whole(FakeTrack(23, 0.029)) is False  # short: clubhead territory
+    assert shotmod.thin_but_whole(FakeTrack(23, 0.043, rms=0.50)) is False  # ragged
+    assert shotmod.thin_but_whole(None) is False
