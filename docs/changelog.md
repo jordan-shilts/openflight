@@ -106,6 +106,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [Electron Kiosk Shell](electron-kiosk-shell.md#browser-local-state-breaking-on-first-electron-launch).
 
 ### Fixed
+- **The camera recorder only sends a shot when the camera saw the ball leave.**
+  The radar finds ball-like tracks in captures with no strike: on 2026-11-13 it
+  read 90 mph while a new ball was raked into place and 104 mph while the
+  camera was being handled. Each clip is already searched for the ball that
+  left (camera/ball_size.py); when the swing's clip found none, the radar read
+  is logged but not posted. With no clip, it still posts;
+  `--no-camera-confirm` turns the check off. On that evening's 14 labeled
+  clips every swing saw its ball leave and both false reads were stopped.
 - **A clean ball read on fewer points is no longer thrown out.** The IWR6843
   rejected every ball track under 28 points. A ball the radar sees across
   most of the capture can hold fewer, because the clubhead takes some of each

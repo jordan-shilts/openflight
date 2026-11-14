@@ -966,3 +966,75 @@ def test_an_unreadable_profile_gives_no_wait_estimate(tmp_path, text):
 
 def test_a_missing_profile_gives_no_wait_estimate(tmp_path):
     assert recorder.dump_seconds_from_config(tmp_path / "missing.cfg") is None
+
+
+# -- the camera confirms the ball left --------------------------------------
+
+
+def test_the_clip_says_whether_a_ball_left_or_there_was_no_clip():
+    sizes = recorder.BallSizes()
+    sizes.add(100.0, 14.0)
+    sizes.add(120.0, None)
+
+    assert sizes.left_near(100.3) is True
+    assert sizes.left_near(120.0) is False
+    assert sizes.left_near(150.0) is None
+
+
+def posted_with_clip(tmp_path, monkeypatch, clip_diameter, *, add_clip=True, no_confirm=False):
+    worker, _used = worker_for_handle(tmp_path, GEOMETRY, monkeypatch)
+    worker.ball_sizes = recorder.BallSizes()
+    if add_clip:
+        worker.ball_sizes.add(10.0, clip_diameter)  # capture_for_handle() triggers at 10.0
+    worker.args.post_to = "http://kiosk/api/shots/measured"
+    worker.args.no_camera_confirm = no_confirm
+    posted = []
+    monkeypatch.setattr(recorder, "CAMERA_CONFIRM_WAIT_S", 0.0)
+    monkeypatch.setattr(worker, "measure_launch", lambda *a, **k: None)
+    monkeypatch.setattr(recorder, "post_shot", lambda url, payload: posted.append(payload) or "ok")
+    worker.handle(capture_for_handle())
+    return posted, json.loads((tmp_path / "radar.jsonl").read_text())
+
+
+def test_a_radar_ball_is_held_back_when_the_camera_saw_the_ball_stay(tmp_path, monkeypatch):
+    posted, logged = posted_with_clip(tmp_path, monkeypatch, None)
+
+    assert posted == []
+    assert logged["camera"] == "no ball left"
+
+
+def test_a_radar_ball_is_posted_when_the_camera_saw_it_leave(tmp_path, monkeypatch):
+    posted, logged = posted_with_clip(tmp_path, monkeypatch, 14.0)
+
+    assert posted == [{"ball_speed_mph": 101.4}]
+    assert "camera" not in logged
+
+
+def test_without_a_clip_the_radar_ball_still_posts(tmp_path, monkeypatch):
+    posted, _logged = posted_with_clip(tmp_path, monkeypatch, None, add_clip=False)
+
+    assert posted == [{"ball_speed_mph": 101.4}]
+
+
+def test_the_camera_check_can_be_turned_off(tmp_path, monkeypatch):
+    posted, _logged = posted_with_clip(tmp_path, monkeypatch, None, no_confirm=True)
+
+    assert posted == [{"ball_speed_mph": 101.4}]
+
+
+def test_the_camera_verdict_is_waited_for_briefly():
+    worker = radar_worker(None)
+    worker.ball_sizes = recorder.BallSizes()
+    ticks = iter([0.0, 0.0, 0.1, 0.2])
+    naps = []
+
+    def nap(seconds):
+        naps.append(seconds)
+        worker.ball_sizes.add(10.0, None)  # the clip's verdict lands during the wait
+
+    held = worker.camera_saw_no_ball(
+        SimpleNamespace(trigger_timestamp=10.0), sleep=nap, clock=lambda: next(ticks)
+    )
+
+    assert held is True
+    assert naps == [0.05]

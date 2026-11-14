@@ -144,6 +144,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--club", default=None, help='Club in play, e.g. "7-iron" (fallback for --club-from)'
     )
     radar.add_argument(
+        "--no-camera-confirm",
+        action="store_true",
+        help="Post a radar ball even when the swing's clip shows no ball leaving",
+    )
+    radar.add_argument(
         "--club-from",
         default=None,
         help="Kiosk club URL read on every swing, e.g. http://127.0.0.1:8080/api/club",
@@ -361,6 +366,9 @@ class NoTriggerInput:
 
 
 MAX_POSTED_HORIZONTAL_DEG = 45.0  # the kiosk refuses a shot whose horizontal exceeds this
+# The swing's clip is measured a moment after it saves; the radar dump takes
+# seconds, so the camera's verdict is normally in first. Wait this long for it.
+CAMERA_CONFIRM_WAIT_S = 1.5
 
 
 def credible_ball(measurement) -> bool:
@@ -455,6 +463,15 @@ class BallSizes:
             return None
         when, diameter = min(items, key=lambda item: abs(item[0] - timestamp))
         return diameter if abs(when - timestamp) <= tolerance_s else None
+
+    def left_near(self, timestamp: float, tolerance_s: float = 1.0) -> bool | None:
+        """Whether the clip triggered with this swing saw a ball leave; None without a clip."""
+        with self._lock:
+            items = [item for item in self._items if abs(item[0] - timestamp) <= tolerance_s]
+        if not items:
+            return None
+        _when, diameter = min(items, key=lambda item: abs(item[0] - timestamp))
+        return diameter is not None
 
 
 class CasePitch:
@@ -707,6 +724,25 @@ class RadarWorker(threading.Thread):
             if capture is not None:
                 self.handle(capture)
 
+    def camera_saw_no_ball(self, capture, *, sleep=time.sleep, clock=time.monotonic) -> bool:
+        """True when this swing's clip shows the resting ball never left.
+
+        The radar finds ball-like tracks in captures with no strike: on
+        2026-11-13 it read 90 mph while a new ball was being raked into place,
+        and 104 mph while the camera was being handled. The clip settles it.
+        With no clip (camera off, or later than the wait), nothing is held.
+        """
+        if self.ball_sizes is None or getattr(self.args, "no_camera_confirm", False):
+            return False
+        deadline = clock() + CAMERA_CONFIRM_WAIT_S
+        while True:
+            left = self.ball_sizes.left_near(capture.trigger_timestamp)
+            if left is not None:
+                return not left
+            if clock() >= deadline:
+                return False
+            sleep(0.05)
+
     def current_club(self) -> str | None:
         """The kiosk's selected club when it can be read, else --club."""
         if self.args.club_from:
@@ -839,6 +875,10 @@ class RadarWorker(threading.Thread):
                 if launch is not None:
                     record["lcmf"] = launch.to_dict()
                 payload = shot_payload(measurement, launch=launch, horizontal_zeroed=zeroed)
+                if payload is not None and self.camera_saw_no_ball(capture):
+                    print(f"RADAR #{capture.sequence}: held back, the camera saw no ball leave")
+                    record["camera"] = "no ball left"
+                    payload = None
                 result = "no_ball" if payload is None else "shot"
                 if self.args.post_to and payload is not None:
                     status = post_shot(self.args.post_to, payload)
