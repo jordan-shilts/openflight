@@ -47,6 +47,7 @@ sys.path.insert(0, str(REPO_ROOT / "src"))
 
 import numpy as np  # noqa: E402
 
+from openflight.camera.ball_leaves_trigger import BallLeavesTrigger  # noqa: E402
 from openflight.camera.ball_size import measure_ball_in_clip  # noqa: E402
 from openflight.camera.capture_runtime import (  # noqa: E402
     CameraCaptureRuntime,
@@ -88,10 +89,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--cooldown", type=float, default=defaults.cooldown_s)
     parser.add_argument(
         "--trigger",
-        choices=("camera", "sound"),
+        choices=("camera", "ball", "sound"),
         default="camera",
         help=(
-            "What starts each reading: camera motion in the hitting zone, or the "
+            "What starts each reading: camera motion in the hitting zone, the resting "
+            "ball suddenly leaving its spot (ignores waggles), or the "
             "sound sensor's GATE on --sound-pin (needs --iwr6843)"
         ),
     )
@@ -326,7 +328,9 @@ class TriggerWorker(threading.Thread):
             self.on_trigger(time.time())
         if self.runtime.notify_trigger():
             self.triggers += 1
-            print(f"TRIGGER #{self.triggers}: {sample.fraction:.1%} of the zone changed")
+            reason = getattr(self.trigger, "last_reason", "")
+            why = f", {reason}" if reason else ""
+            print(f"TRIGGER #{self.triggers}: {sample.fraction:.1%} of the zone changed{why}")
         else:
             print("trigger ignored: previous clip still saving")
 
@@ -993,14 +997,16 @@ def main(argv: list[str] | None = None) -> int:
         auto_exposure=not args.fixed_exposure,
         auto_exposure_state_path=None,
     )
-    trigger = MotionTrigger(
-        MotionTriggerSettings(
-            roi=args.roi,
-            min_fraction=args.min_fraction,
-            min_delta=args.min_delta,
-            cooldown_s=args.cooldown,
-        )
+    motion_settings = MotionTriggerSettings(
+        roi=args.roi,
+        min_fraction=args.min_fraction,
+        min_delta=args.min_delta,
+        cooldown_s=args.cooldown,
     )
+    if args.trigger == "ball":
+        trigger = BallLeavesTrigger(motion_settings)
+    else:
+        trigger = MotionTrigger(motion_settings)
     radar_monitor = radar_worker = ball_sizes = kiosk_status = None
     worker_holder: dict[str, TriggerWorker] = {}
     sound = args.trigger == "sound"

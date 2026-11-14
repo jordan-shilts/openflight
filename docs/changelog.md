@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **`--trigger ball` for the camera recorder (temporary, until the OPS243).**
+  The motion trigger also fires on a waggle over the ball, and each trigger
+  costs the TI radar a ~2.5 s readout, so a swing a second later went
+  unmeasured (2026-11-13: ball on the tee after a waggle clip, gone 3 s later,
+  nothing on screen). The new trigger (camera/ball_leaves_trigger.py) finds the
+  resting ball while the zone is quiet and fires only when it vanishes within
+  two frames with club motion in the zone; with no ball in view for 3 s it
+  falls back to motion. On that evening's 26 labeled clips it fired on all 11
+  swings, 1-3 frames earlier than the motion trigger, and on none of the 15
+  waggles, rakes or camera bumps. 0.7 ms a frame on the Pi.
 - **Club sync with Open-Birdie.** The club picked on the kiosk or phone now shows
   in Open-Birdie too, and a club picked there still comes here. To a simulator
   that names itself (Open-Birdie does; GSPro never does), heartbeats and shots
