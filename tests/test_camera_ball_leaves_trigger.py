@@ -44,8 +44,8 @@ def test_a_struck_ball_fires_once_the_resting_ball_is_known():
 
 
 def test_a_waggle_next_to_the_ball_does_not_fire():
-    still = [scene() for _ in range(30)]
-    waggle = [scene(club_x=330 + (i % 10)) for i in range(60)]  # a pixel a frame
+    still = [scene(club_x=330) for _ in range(30)]  # club at address
+    waggle = [scene(club_x=330 + abs((i + 10) % 20 - 10)) for i in range(60)]  # a pixel a frame
 
     _trigger, fired = run(still + waggle)
 
@@ -53,7 +53,7 @@ def test_a_waggle_next_to_the_ball_does_not_fire():
 
 
 def test_a_ball_rolled_away_slowly_does_not_fire():
-    still = [scene() for _ in range(30)]
+    still = [scene(club_x=300) for _ in range(30)]  # club resting by the ball
     rake = [scene(ball=(232, 320 + i), club_x=300 + i) for i in range(1, 40)]
 
     _trigger, fired = run(still + rake)
@@ -73,3 +73,28 @@ def test_with_no_ball_in_view_it_falls_back_to_motion():
 
     assert fired == [30]
     assert trigger.last_reason.startswith("motion")
+
+
+def glint_scene(ball=(232, 320), club_x=None):
+    image = scene(ball=ball, club_x=club_x).astype(np.int16)
+    image[236:239, 360:372] = 255  # a fixed glint brighter than the ball, beside it
+    return image.clip(0, 255).astype(np.uint8)
+
+
+def test_a_brighter_fixed_glint_does_not_hide_the_ball():
+    still = [glint_scene() for _ in range(30)]
+    strike = [glint_scene(ball=None, club_x=300), glint_scene(ball=None, club_x=360)]
+    trigger, fired = run(still + strike + [glint_scene(ball=None)] * 5)
+
+    assert fired == [30]
+    assert trigger.last_reason == "ball left"
+
+
+def test_very_strong_motion_fires_even_when_no_spot_left():
+    still = [scene(ball=None) for _ in range(30)]
+    big = scene(ball=None)
+    big[215:330, 150:500] = 200  # most of the zone changes at once
+    trigger, fired = run(still + [big])
+
+    assert fired == [30]
+    assert trigger.last_reason in ("strong motion", "motion (no resting ball seen)")

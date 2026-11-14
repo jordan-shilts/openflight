@@ -351,6 +351,9 @@ class TriggerWorker(threading.Thread):
             f"{last.threshold:.0f} counts | noise {last.diff_noise:.1f} | "
             f"{'armed' if last.armed else 'not armed'} | dropped {self.dropped}"
         )
+        status = getattr(self.trigger, "status", None)
+        if callable(status):
+            line += f" | {status()}"
         gate = None if self.gate_state is None else self.gate_state()
         if gate:
             line += " | sound GATE stuck high"
