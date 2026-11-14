@@ -12,6 +12,9 @@ from typing import List, Optional
 
 import pytest
 
+from openflight.cloud import cli as cloud_cli_module
+from openflight.cloud.supabase import config as supabase_config_module
+
 # Add tests directory to sys.path for importing test utilities like spin_synth
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -120,3 +123,18 @@ def _isolate_saved_club(tmp_path_factory, monkeypatch):
     """Keep club picks off ~/.config/openflight/club.json during tests."""
     saved = tmp_path_factory.mktemp("club") / "club.json"
     monkeypatch.setenv("OPENFLIGHT_CLUB_PATH", str(saved))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_supabase_config(tmp_path_factory, monkeypatch):
+    """Keep uploads off ~/.config/openflight/supabase.json during tests.
+
+    The server starts a background Supabase push after each logged shot, and
+    ``openflight-cloud push`` reads the file beside its default ``--config``;
+    a test must never upload to a developer's project.
+    """
+    config_dir = tmp_path_factory.mktemp("cloud-config")
+    monkeypatch.setattr(
+        supabase_config_module, "SUPABASE_CONFIG_PATH", config_dir / "supabase.json"
+    )
+    monkeypatch.setattr(cloud_cli_module, "CONFIG_PATH", config_dir / "cloud.json")

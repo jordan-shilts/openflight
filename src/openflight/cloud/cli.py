@@ -1,12 +1,19 @@
 """``openflight-cloud`` command-line entry point.
 
 openflight-cloud link              # one-time device pairing
-openflight-cloud push [--dry-run]  # filter + upload anything unpushed
+openflight-cloud push [--dry-run]  # filter + upload anything unpushed (FlightWeb and Supabase)
 openflight-cloud status            # linked? queued? parked? last error?
 openflight-cloud raw on|off        # opt in/out of raw radar + L3 dump uploads
+
+openflight-cloud supabase setup    # point this Pi at your own Supabase project
+openflight-cloud supabase test     # check the key, schema and registration
+openflight-cloud supabase status   # what has gone up, what is waiting
+openflight-cloud supabase push     # upload new shots now
+openflight-cloud supabase on|off   # resume / pause Supabase uploads
 """
 
 import argparse
+import sys
 from pathlib import Path
 from typing import List, Optional
 
@@ -14,6 +21,8 @@ from ..session_logger import SessionLogger
 from . import commands
 from .client import CloudClient
 from .config import CONFIG_PATH, CloudConfig, load_config, save_config
+from .supabase import commands as supabase_commands, push as supabase_push
+from .supabase.config import SupabaseConfig, config_path_for, load_supabase_config
 
 DEFAULT_LOG_DIR = SessionLogger.DEFAULT_LOG_DIR
 
@@ -39,7 +48,10 @@ def _build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="openflight-cloud",
-        description="Push filtered OpenFlight session logs to the FlightWeb cloud.",
+        description=(
+            "Push filtered OpenFlight session logs to the FlightWeb cloud and/or "
+            "your own Supabase project."
+        ),
         parents=[common],
     )
     sub = parser.add_subparsers(dest="command")
@@ -76,7 +88,163 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Opt in/out of uploading raw radar data and IWR6843 L3 dumps (for testing).",
     )
     raw.add_argument("state", choices=["on", "off"])
+
+    _add_supabase_parser(sub, common)
     return parser
+
+
+def _add_supabase_parser(sub, common: argparse.ArgumentParser) -> None:
+    supabase = sub.add_parser(
+        "supabase",
+        parents=[common],
+        help="Upload shots to your own Supabase project.",
+        description=(
+            "Upload shots to your own Supabase project. The config lives beside "
+            "--config as supabase.json."
+        ),
+    )
+    supabase_sub = supabase.add_subparsers(dest="supabase_command")
+
+    setup = supabase_sub.add_parser(
+        "setup",
+        parents=[common],
+        help="Save the project URL and key, make a device token, print the SQL to register it.",
+    )
+    setup.add_argument("--url", help="Project URL, https://<ref>.supabase.co (prompted if absent).")
+    setup.add_argument("--key", help="Publishable key, sb_publishable_... (prompted if absent).")
+    setup.add_argument("--name", help="Device name in golf_devices (default: hostname).")
+    setup.add_argument(
+        "--new-token",
+        action="store_true",
+        help="Make a new device token even if this Pi has one (it must be registered again).",
+    )
+    test_choice = setup.add_mutually_exclusive_group()
+    test_choice.add_argument(
+        "--test",
+        dest="run_test",
+        action="store_const",
+        const=True,
+        default=None,
+        help="Test the connection right after setup.",
+    )
+    test_choice.add_argument(
+        "--no-test",
+        dest="run_test",
+        action="store_const",
+        const=False,
+        help="Do not offer the connection test.",
+    )
+
+    supabase_sub.add_parser(
+        "test", parents=[common], help="Check the key, schema and registration (writes nothing)."
+    )
+    supabase_sub.add_parser(
+        "status", parents=[common], help="Show what has been uploaded and what is waiting."
+    )
+    supabase_push_parser = supabase_sub.add_parser(
+        "push", parents=[common], help="Upload new shots now."
+    )
+    supabase_push_parser.add_argument(
+        "--dry-run", action="store_true", help="Show what would be sent; send nothing."
+    )
+    supabase_push_parser.add_argument(
+        "--resend",
+        action="store_true",
+        help="Forget what was sent and send every session again (safe: rows are upserted).",
+    )
+    supabase_push_parser.add_argument(
+        "--background",
+        action="store_true",
+        help="Skip while paused after the project refused this Pi (used by the server).",
+    )
+    supabase_sub.add_parser("on", parents=[common], help="Resume Supabase uploads.")
+    supabase_sub.add_parser("off", parents=[common], help="Pause Supabase uploads.")
+
+
+def _load_supabase(cloud_config_path: Path) -> Optional[SupabaseConfig]:
+    """The Supabase config beside ``cloud_config_path``; None if absent or unreadable."""
+    path = config_path_for(cloud_config_path)
+    try:
+        return load_supabase_config(path)
+    except (OSError, ValueError) as exc:
+        print(f"Supabase: could not read {path} ({exc}); ignoring it. Re-run setup to replace it.")
+        return None
+
+
+def _supabase_main(args: argparse.Namespace) -> int:
+    path = config_path_for(args.config)
+    config = _load_supabase(args.config)
+    command = args.supabase_command
+
+    if command == "setup":
+        options = supabase_commands.SetupOptions(
+            url=args.url,
+            key=args.key,
+            name=args.name,
+            new_token=args.new_token,
+            test=args.run_test,
+        )
+        console = supabase_commands.Console(interactive=sys.stdin.isatty())
+        ok = supabase_commands.cmd_setup(config, path, args.log_dir, options, console)
+        return 0 if ok else 1
+    if command == "status":
+        supabase_commands.cmd_status(config, args.log_dir)
+        return 0
+    if command in ("on", "off"):
+        ok = supabase_commands.cmd_set_enabled(config, path, command == "on")
+        return 0 if ok else 1
+
+    config = config or SupabaseConfig()
+    client = supabase_commands.make_client(config)
+    if command == "test":
+        return 0 if supabase_commands.cmd_test(config, args.log_dir, client) else 1
+    if command == "push":
+        summary = supabase_push.push(
+            config,
+            args.log_dir,
+            client,
+            dry_run=args.dry_run,
+            resend=args.resend,
+            respect_pause=args.background,
+        )
+        return 1 if summary.needs_owner else 0
+    print("usage: openflight-cloud supabase {setup,test,status,push,on,off}")
+    return 1
+
+
+def _push_all(args: argparse.Namespace, config: CloudConfig) -> int:
+    """``push``: FlightWeb if linked, then Supabase if set up.
+
+    With neither configured, FlightWeb's push still runs so its "inactive"
+    message tells the user how to start.
+    """
+    supabase_config = _load_supabase(args.config)
+    supabase_active = supabase_config is not None and supabase_config.is_active()
+    rc = 0
+    if config.is_active() or not supabase_active:
+        retry = args.retry is not None
+        session = None if args.retry == "__ALL__" else args.retry
+        summary = commands.cmd_push(
+            config,
+            args.log_dir,
+            _client(config),
+            dry_run=args.dry_run,
+            retry=retry,
+            session=session,
+        )
+        if summary.get("needs_relink"):
+            rc = 1
+    if supabase_active:
+        result = supabase_push.push(
+            supabase_config,
+            args.log_dir,
+            supabase_commands.make_client(supabase_config),
+            dry_run=args.dry_run,
+            respect_pause=True,
+        )
+        if result.needs_owner:
+            rc = 1
+    return rc
 
 
 def _client(config: CloudConfig) -> CloudClient:
@@ -93,6 +261,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.print_help()
         return 1
 
+    if args.command == "supabase":
+        return _supabase_main(args)
+
     config = load_config(args.config) or CloudConfig()
 
     if args.command == "link":
@@ -100,17 +271,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0 if ok else 1
 
     if args.command == "push":
-        retry = args.retry is not None
-        session = None if args.retry == "__ALL__" else args.retry
-        summary = commands.cmd_push(
-            config,
-            args.log_dir,
-            _client(config),
-            dry_run=args.dry_run,
-            retry=retry,
-            session=session,
-        )
-        return 1 if summary.get("needs_relink") else 0
+        return _push_all(args, config)
 
     if args.command == "status":
         commands.cmd_status(config, args.log_dir, _client(config))
