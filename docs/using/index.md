@@ -23,6 +23,10 @@ Everything after the hardware works.
 
     Push filtered sessions to FlightWeb, with spool-and-retry over flaky wifi.
 
+- :material-database-outline: **[Your own Supabase](supabase.md)**
+
+    Every shot in a Supabase project you own, within seconds of hitting it.
+
 - :material-chart-line: **[Observability](observability.md)**
 
     Ship session logs to Grafana Cloud and query them with LogQL.

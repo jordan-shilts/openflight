@@ -188,5 +188,7 @@ exists.
 
 ## See also
 
+- [Upload shots to your own Supabase](supabase.md) — the same filtered shots
+  in a project you own, alongside FlightWeb or instead of it.
 - [`docs/openflight-cloud-uploader-spec.md`](../reference/cloud-uploader-spec.md)
   — the wire contract this client implements (endpoints, status codes, caps).

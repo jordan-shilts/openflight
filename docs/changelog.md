@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Shots in your own Supabase project.** `openflight-cloud supabase setup`
+  saves the project URL and publishable key, gives the Pi a device token, and
+  prints the one SQL line that registers it; `scripts/supabase/schema.sql`
+  creates the tables. Each shot then uploads within seconds (the server starts
+  at most one background upload every 10 s), and `openflight-cloud push` (the
+  timer and session end) covers Supabase too. Uploads are incremental and
+  idempotent, send only the same allowlisted entries as FlightWeb, keep
+  everything for the next run when offline, and pause for 30 minutes instead
+  of retrying when the project refuses the Pi. Works alongside FlightWeb or on
+  its own; `supabase test`, `status`, `push` and `on`/`off` round it out. See
+  [Upload shots to your own Supabase](using/supabase.md).
+- **Cloud: online or offline, on the kiosk.** The server tracks whether it can
+  reach the Supabase project: online (each shot goes up within seconds),
+  offline (shots wait on the Pi; one small check every 30 s, and the backlog
+  goes up oldest first the moment it answers, without waiting for the 10-minute
+  timer), device not registered, or not set up, with the number of shots still
+  waiting. The menu shows it in one line under **System > Cloud**, in all four
+  languages; `GET /api/cloud/status` and a `cloud_status` Socket.IO event
+  report it too. A shot only counts as uploaded once Supabase accepted it, so a
+  dropped connection or a crash mid-upload resends that batch.
 - **Status light.** `--status-led-gpio <BCM>` drives one LED on the case so the
   golfer at the ball knows when to swing: solid when a swing now is measured,
   blinking (2 Hz) while the last swing is still being measured, off while

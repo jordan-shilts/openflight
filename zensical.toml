@@ -73,6 +73,7 @@ nav = [
       "using/simulator/partee.md",
     ] },
     "using/cloud-sync.md",
+    "using/supabase.md",
     "using/battery.md",
     "using/observability.md",
     "using/accuracy.md",
