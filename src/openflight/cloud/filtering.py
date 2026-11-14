@@ -14,6 +14,7 @@ session's ``iwr6843_capture`` entries name the L3 dump files to upload
 alongside it (see ``CaptureRef``).
 """
 
+import enum
 import gzip
 import json
 import uuid
@@ -99,18 +100,62 @@ class FilterResult:
     captures: List[CaptureRef] = field(default_factory=list)
 
 
+class LineVerdict(enum.Enum):
+    """What the upload allowlist decides for one parsed session line."""
+
+    KEEP = "keep"
+    NOT_ALLOWED = "not_allowed"
+    OVERSIZE = "oversize"
+
+
+def parse_line(raw: str) -> Optional[Dict[str, Any]]:
+    """The JSON object on one session line, or None for blank or junk lines."""
+    stripped = raw.strip()
+    if not stripped:
+        return None
+    try:
+        parsed = json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def screen_entry(raw: str, entry: Dict[str, Any], raw_mode: bool = False) -> LineVerdict:
+    """Apply the upload allowlist and per-line size cap to one parsed line.
+
+    ``raw`` is the line as read (surrounding whitespace is ignored). Every
+    uploader that sends session data off the Pi must go through this.
+    """
+    entry_type = entry.get("type")
+    if raw_mode:
+        allowed = isinstance(entry_type, str) and entry_type not in RAW_EXCLUDED_TYPES
+    else:
+        allowed = entry_type in KEEP_ENTRY_TYPES
+    if not allowed:
+        return LineVerdict.NOT_ALLOWED
+    max_line_bytes = MAX_RAW_LINE_BYTES if raw_mode else MAX_LINE_BYTES
+    if len(raw.strip().encode("utf-8")) > max_line_bytes:
+        return LineVerdict.OVERSIZE
+    return LineVerdict.KEEP
+
+
+def session_id_for(session_uuid: Any, device_id: str, filename: str) -> str:
+    """A session's upload id: its embedded ``session_uuid``, else a UUIDv5.
+
+    The UUIDv5 of ``device_id:filename`` covers sessions logged before the
+    session logger embedded a UUID, so the same file always maps to the same id.
+    """
+    if session_uuid:
+        return str(session_uuid).lower()
+    return str(uuid.uuid5(SESSION_NAMESPACE, f"{device_id}:{filename}"))
+
+
 def _iter_entries(lines: Iterable[str]):
     """Yield (raw_line, parsed_dict) for parseable JSON lines, skipping junk."""
     for raw in lines:
-        stripped = raw.strip()
-        if not stripped:
-            continue
-        try:
-            parsed = json.loads(stripped)
-        except (json.JSONDecodeError, ValueError):
-            continue
-        if isinstance(parsed, dict):
-            yield stripped, parsed
+        parsed = parse_line(raw)
+        if parsed is not None:
+            yield raw.strip(), parsed
 
 
 def _capture_ref(entry: Dict[str, Any], session_dir: Optional[Path]) -> Optional[CaptureRef]:
@@ -150,30 +195,25 @@ def _filter_entries(
     dropped_oversize = 0
     embedded_uuid = ""
     captures: Dict[int, CaptureRef] = {}
-    max_line_bytes = MAX_RAW_LINE_BYTES if raw_mode else MAX_LINE_BYTES
 
     for raw, entry in _iter_entries(lines):
         entry_type = entry.get("type")
         if entry_type == "session_start" and not embedded_uuid:
-            session_uuid = entry.get("session_uuid")
-            if session_uuid:
-                embedded_uuid = str(session_uuid).lower()
-        if raw_mode:
-            if not isinstance(entry_type, str) or entry_type in RAW_EXCLUDED_TYPES:
-                continue
-            if entry_type == IWR6843_CAPTURE_TYPE:
-                ref = _capture_ref(entry, session_dir)
-                if ref is not None:
-                    captures[ref.shot_number] = ref  # last capture for a shot wins
-        elif entry_type not in KEEP_ENTRY_TYPES:
+            embedded_uuid = entry.get("session_uuid") or ""
+        verdict = screen_entry(raw, entry, raw_mode=raw_mode)
+        if verdict is LineVerdict.NOT_ALLOWED:
             continue
-        if len(raw.encode("utf-8")) > max_line_bytes:
+        if raw_mode and entry_type == IWR6843_CAPTURE_TYPE:
+            ref = _capture_ref(entry, session_dir)
+            if ref is not None:
+                captures[ref.shot_number] = ref  # last capture for a shot wins
+        if verdict is LineVerdict.OVERSIZE:
             dropped_oversize += 1
             continue
         kept_lines.append(raw)
         kept_type_counts[entry_type] = kept_type_counts.get(entry_type, 0) + 1
 
-    session_id = embedded_uuid or str(uuid.uuid5(SESSION_NAMESPACE, f"{device_id}:{filename}"))
+    session_id = session_id_for(embedded_uuid, device_id, filename)
     manifest = {
         "type": MANIFEST_TYPE,
         "format_version": MANIFEST_FORMAT_VERSION,

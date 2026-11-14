@@ -189,3 +189,41 @@ class TestBuildUploadBody:
         )
         with pytest.raises(flt.BodyTooLargeError):
             flt.build_upload_body(result, max_gzip_bytes=1_000_000, max_inflated_bytes=1)
+
+
+class TestSharedAllowlistHelpers:
+    """The per-line rule every uploader (FlightWeb, Supabase) applies."""
+
+    def test_parse_line(self):
+        assert flt.parse_line('  {"type": "x"}\n') == {"type": "x"}
+        assert flt.parse_line("") is None
+        assert flt.parse_line("not json") is None
+        assert flt.parse_line("[1, 2]") is None
+
+    @pytest.mark.parametrize("entry_type", sorted(flt.KEEP_ENTRY_TYPES))
+    def test_keeps_allowlisted_types(self, entry_type):
+        entry = {"type": entry_type}
+        assert flt.screen_entry(json.dumps(entry), entry) is flt.LineVerdict.KEEP
+
+    @pytest.mark.parametrize("entry_type", ["rolling_buffer_capture", "iq_blocks", "future", None])
+    def test_refuses_everything_else(self, entry_type):
+        entry = {"type": entry_type}
+        assert flt.screen_entry(json.dumps(entry), entry) is flt.LineVerdict.NOT_ALLOWED
+
+    def test_oversize_allowlisted_line(self):
+        entry = {"type": "shot_detected", "pad": "x" * flt.MAX_LINE_BYTES}
+        assert flt.screen_entry(json.dumps(entry), entry) is flt.LineVerdict.OVERSIZE
+
+    def test_raw_mode_keeps_raw_entries_but_not_kld7(self):
+        raw = {"type": "rolling_buffer_capture"}
+        kld7 = {"type": "kld7_buffer"}
+        assert flt.screen_entry(json.dumps(raw), raw, raw_mode=True) is flt.LineVerdict.KEEP
+        assert (
+            flt.screen_entry(json.dumps(kld7), kld7, raw_mode=True) is flt.LineVerdict.NOT_ALLOWED
+        )
+
+    def test_session_id_for(self):
+        assert flt.session_id_for("ABC", "dev", "f.jsonl") == "abc"
+        assert flt.session_id_for(None, "dev", "f.jsonl") == str(
+            uuid.uuid5(flt.SESSION_NAMESPACE, "dev:f.jsonl")
+        )

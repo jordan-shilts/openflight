@@ -14,7 +14,7 @@ import json
 import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 # Current deployment. The production domain is undecided (openflight vs.
 # flightweb), so it lives in config and may move.
@@ -57,15 +57,20 @@ def load_config(path: Path = CONFIG_PATH) -> Optional[CloudConfig]:
     )
 
 
-def save_config(config: CloudConfig, path: Path = CONFIG_PATH) -> None:
-    """Write config to ``path`` with mode 0600, creating parent dirs."""
+def write_private_json(path: Path, data: Dict[str, Any]) -> None:
+    """Write ``data`` as JSON to ``path`` with mode 0600, creating parent dirs."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    # Create with restrictive permissions from the start so the bearer token is
+    # Create with restrictive permissions from the start so a bearer token is
     # never briefly world-readable.
     fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        json.dump(asdict(config), handle, indent=2)
+        json.dump(data, handle, indent=2)
         handle.write("\n")
     # Re-assert mode in case the file already existed with looser permissions.
     os.chmod(path, 0o600)
+
+
+def save_config(config: CloudConfig, path: Path = CONFIG_PATH) -> None:
+    """Write config to ``path`` with mode 0600, creating parent dirs."""
+    write_private_json(path, asdict(config))
