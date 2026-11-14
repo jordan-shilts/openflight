@@ -19,6 +19,18 @@ export interface SimStatus {
   peer?: string;
 }
 
+/** Supabase uploads, as `GET /api/cloud/status` and the `cloud_status` event report them. */
+export type CloudLinkState = 'online' | 'offline' | 'needs_attention' | 'not_set_up';
+
+export interface CloudStatus {
+  state: CloudLinkState;
+  /** Shots on the Pi not yet uploaded; null when unknown or not set up. */
+  pending: number | null;
+  message: string;
+  /** For needs_attention: 'unauthorized' or 'schema_missing'. */
+  reason: string;
+}
+
 export interface SimShotInfo {
   target: string;
   shot_number: number;

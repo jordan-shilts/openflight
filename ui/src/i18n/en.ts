@@ -216,6 +216,17 @@ export const en = {
   'menu.enable': 'Enable',
   'menu.shutdown': 'Shut down',
   'menu.openOnPhone': 'Open on your phone',
+  'menu.cloud': 'Cloud',
+
+  'cloud.online': 'Online · all shots saved',
+  'cloud.onlineSending': 'Online · sending {count} shots',
+  'cloud.onlineSendingOne': 'Online · sending 1 shot',
+  'cloud.offline': 'Offline · {count} shots waiting, will send when back online',
+  'cloud.offlineOne': 'Offline · 1 shot waiting, will send when back online',
+  'cloud.offlineNone': 'Offline · shots will send when back online',
+  'cloud.notRegistered': 'Device not registered or wrong key',
+  'cloud.noTables': 'Supabase tables missing: run schema.sql',
+  'cloud.notSetUp': 'Not set up',
 
   'phone.loading': "Finding this screen's address…",
   'phone.unavailable': 'No address found that a phone can reach. Check the Wi-Fi connection, then try again.',

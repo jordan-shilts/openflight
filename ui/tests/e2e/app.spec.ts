@@ -696,3 +696,28 @@ test('tabbing to a menu segmented control shows a real keyboard focus ring, not 
   // The individual button's own outline stays suppressed — no double ring.
   await expect(metricButton).toHaveCSS('outline-style', 'none');
 });
+
+test('the menu says whether shots reach the cloud, inside the sheet on every kiosk', async ({ page, request }) => {
+  // The e2e backend runs with --no-logging, so Supabase uploads cannot run.
+  const response = await request.get('http://127.0.0.1:8080/api/cloud/status');
+  expect(response.ok()).toBeTruthy();
+  expect(await response.json()).toMatchObject({ state: 'not_set_up', pending: null });
+
+  await gotoApp(page);
+  await dismissPicker(page);
+  await openMenu(page);
+
+  const menu = page.getByRole('dialog', { name: 'Menu' });
+  const cloud = menu.getByRole('status');
+  await expect(cloud).toHaveText('Not set up');
+
+  for (const viewport of KIOSK_VIEWPORTS) {
+    await page.setViewportSize(viewport);
+    const sheetBox = await menu.boundingBox();
+    const lineBox = await cloud.boundingBox();
+    expect(sheetBox).not.toBeNull();
+    expect(lineBox).not.toBeNull();
+    expect(lineBox!.x).toBeGreaterThanOrEqual(sheetBox!.x);
+    expect(lineBox!.x + lineBox!.width).toBeLessThanOrEqual(sheetBox!.x + sheetBox!.width + 0.5);
+  }
+});

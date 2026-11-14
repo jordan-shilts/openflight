@@ -218,6 +218,17 @@ export const fr: Messages = {
   'menu.enable': 'Activer',
   'menu.shutdown': 'Éteindre',
   'menu.openOnPhone': 'Ouvrir sur votre téléphone',
+  'menu.cloud': 'Cloud',
+
+  'cloud.online': 'En ligne · tous les coups enregistrés',
+  'cloud.onlineSending': 'En ligne · envoi de {count} coups',
+  'cloud.onlineSendingOne': 'En ligne · envoi de 1 coup',
+  'cloud.offline': 'Hors ligne · {count} coups en attente, envoyés au retour de la connexion',
+  'cloud.offlineOne': 'Hors ligne · 1 coup en attente, envoyé au retour de la connexion',
+  'cloud.offlineNone': 'Hors ligne · les coups partiront au retour de la connexion',
+  'cloud.notRegistered': 'Appareil non enregistré ou clé incorrecte',
+  'cloud.noTables': 'Tables Supabase manquantes : exécutez schema.sql',
+  'cloud.notSetUp': 'Non configuré',
 
   'phone.loading': 'Recherche de l’adresse de cet écran…',
   'phone.unavailable': 'Aucune adresse joignable par un téléphone. Vérifiez la connexion Wi-Fi, puis réessayez.',

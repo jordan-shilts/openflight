@@ -218,6 +218,17 @@ export const pt: Messages = {
   'menu.enable': 'Ativar',
   'menu.shutdown': 'Desligar',
   'menu.openOnPhone': 'Abrir no seu celular',
+  'menu.cloud': 'Nuvem',
+
+  'cloud.online': 'Online · todas as tacadas salvas',
+  'cloud.onlineSending': 'Online · enviando {count} tacadas',
+  'cloud.onlineSendingOne': 'Online · enviando 1 tacada',
+  'cloud.offline': 'Offline · {count} tacadas aguardando, serão enviadas quando a conexão voltar',
+  'cloud.offlineOne': 'Offline · 1 tacada aguardando, será enviada quando a conexão voltar',
+  'cloud.offlineNone': 'Offline · as tacadas serão enviadas quando a conexão voltar',
+  'cloud.notRegistered': 'Dispositivo não registrado ou chave incorreta',
+  'cloud.noTables': 'Faltam as tabelas do Supabase: execute schema.sql',
+  'cloud.notSetUp': 'Não configurado',
 
   'phone.loading': 'Procurando o endereço desta tela…',
   'phone.unavailable': 'Nenhum endereço que um celular consiga acessar. Verifique a conexão Wi-Fi e tente de novo.',

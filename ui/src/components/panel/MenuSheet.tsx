@@ -6,6 +6,7 @@ import { useLocaleStore } from '../../stores/useLocaleStore';
 import { useUnitPreference } from '../../state/useUnitPreference';
 import { SegmentedControl } from '../ui/SegmentedControl';
 import { SimStatus } from '../SimStatus';
+import { CloudStatusRow } from './CloudStatusRow';
 
 interface MenuSheetProps {
   onClose: () => void;
@@ -20,10 +21,12 @@ interface MenuSheetProps {
  * block is an addition: the mockup replaced the old top header, and simulator
  * state had nowhere else to go. Battery lives in the footer.
  * Socket connection lives on the panel header LED.
+ * Cloud is the Supabase upload state, in one plain line, once the server reports it.
  * "Open on your phone" is for the kiosk; CSS hides it when this is the phone.
  */
 export function MenuSheet({ onClose, onShutdown, onOpenPhoneLink }: MenuSheetProps) {
   const simStatuses = useSystemStore((state) => state.simStatuses);
+  const cloudStatus = useSystemStore((state) => state.cloudStatus);
   const { t } = useI18n();
   const { unitSystem, setUnitSystem } = useUnitPreference();
   const { theme, setTheme } = useThemeStore();
@@ -83,6 +86,7 @@ export function MenuSheet({ onClose, onShutdown, onOpenPhoneLink }: MenuSheetPro
               <SimStatus statuses={simStatuses} />
             </div>
           ) : null}
+          <CloudStatusRow status={cloudStatus} />
           <button type="button" className="menu-sheet__phone-link" onClick={onOpenPhoneLink}>
             {t('menu.openOnPhone')}
           </button>

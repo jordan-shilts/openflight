@@ -82,3 +82,15 @@ describe('MenuSheet battery', () => {
     useSystemStore.setState({ powerStatus: null });
   });
 });
+
+describe('MenuSheet cloud', () => {
+  it('shows nothing until the server reports the upload state', () => {
+    expect(renderMenu()).not.toContain('menu-sheet__cloud');
+  });
+
+  it('places the cloud line in the System section', () => {
+    const source = readFileSync(fileURLToPath(new URL('./MenuSheet.tsx', import.meta.url)), 'utf8');
+
+    expect(source).toMatch(/menu\.system[\s\S]*<CloudStatusRow status=\{cloudStatus\} \/>[\s\S]*menu\.openOnPhone/);
+  });
+});

@@ -218,6 +218,17 @@ export const es: Messages = {
   'menu.enable': 'Activar',
   'menu.shutdown': 'Apagar',
   'menu.openOnPhone': 'Abrir en tu teléfono',
+  'menu.cloud': 'Nube',
+
+  'cloud.online': 'En línea · todos los golpes guardados',
+  'cloud.onlineSending': 'En línea · enviando {count} golpes',
+  'cloud.onlineSendingOne': 'En línea · enviando 1 golpe',
+  'cloud.offline': 'Sin conexión · {count} golpes en espera, se enviarán al volver la conexión',
+  'cloud.offlineOne': 'Sin conexión · 1 golpe en espera, se enviará al volver la conexión',
+  'cloud.offlineNone': 'Sin conexión · los golpes se enviarán al volver la conexión',
+  'cloud.notRegistered': 'Dispositivo no registrado o clave incorrecta',
+  'cloud.noTables': 'Faltan las tablas de Supabase: ejecuta schema.sql',
+  'cloud.notSetUp': 'Sin configurar',
 
   'phone.loading': 'Buscando la dirección de esta pantalla…',
   'phone.unavailable':

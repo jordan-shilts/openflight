@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { PowerStatus } from '../types/power';
-import type { SimShotInfo, SimStatus } from '../types/socket';
+import type { CloudStatus, SimShotInfo, SimStatus } from '../types/socket';
 
 interface SystemState {
   connected: boolean;
@@ -8,6 +8,7 @@ interface SystemState {
   debugMode: boolean;
   cloudUploadState: 'idle' | 'running' | 'complete' | 'error';
   cloudUploadMessage: string;
+  cloudStatus: CloudStatus | null;
   simStatuses: Record<string, SimStatus>;
   latestSimShots: Record<string, SimShotInfo>;
   serverClub: string | null;
@@ -16,6 +17,7 @@ interface SystemState {
   setMockMode: (mockMode: boolean) => void;
   setDebugMode: (debugMode: boolean) => void;
   setCloudUploadStatus: (state: SystemState['cloudUploadState'], message: string) => void;
+  setCloudStatus: (status: CloudStatus) => void;
   setSimStatus: (status: SimStatus) => void;
   setLatestSimShot: (shot: SimShotInfo) => void;
   setServerClub: (club: string | null) => void;
@@ -28,6 +30,7 @@ export const useSystemStore = create<SystemState>((set) => ({
   debugMode: false,
   cloudUploadState: 'idle',
   cloudUploadMessage: '',
+  cloudStatus: null,
   simStatuses: {},
   latestSimShots: {},
   serverClub: null,
@@ -36,6 +39,7 @@ export const useSystemStore = create<SystemState>((set) => ({
   setMockMode: (mockMode) => set({ mockMode }),
   setDebugMode: (debugMode) => set({ debugMode }),
   setCloudUploadStatus: (cloudUploadState, cloudUploadMessage) => set({ cloudUploadState, cloudUploadMessage }),
+  setCloudStatus: (cloudStatus) => set({ cloudStatus }),
   setSimStatus: (status) =>
     set((state) => ({
       simStatuses: { ...state.simStatuses, [status.target]: status },

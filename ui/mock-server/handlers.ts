@@ -4,10 +4,12 @@
 
 import type { Server, Socket } from 'socket.io';
 import type { CameraCaptureSettings } from '../src/stores/useCameraStore.js';
-import type { RadarConfig } from '../src/types/socket.js';
+import type { CloudStatus, RadarConfig } from '../src/types/socket.js';
 import type { MockSession } from './session.js';
 
 const CAMERA_CAPTURE_SETTINGS: CameraCaptureSettings = { available: false };
+// The mock has no Supabase project behind it.
+const CLOUD_STATUS: CloudStatus = { state: 'not_set_up', pending: null, message: 'mock server', reason: '' };
 
 export function registerHandlers(io: Server, session: MockSession): void {
   io.on('connection', (socket: Socket) => {
@@ -31,6 +33,10 @@ export function registerHandlers(io: Server, session: MockSession): void {
 
     socket.on('get_session', () => {
       socket.emit('session_state', session.sessionStatePayload(true));
+    });
+
+    socket.on('get_cloud_status', () => {
+      socket.emit('cloud_status', CLOUD_STATUS);
     });
 
     socket.on('get_trigger_status', () => {
