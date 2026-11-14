@@ -43,6 +43,7 @@ from .ble.protocol import (
     encode_shot_event,
     stable_shot_event_id,
 )
+from .cloud.supabase.link import SupabaseLink
 from .club_memory import load_saved_club, save_club
 from .clubs import ClubType
 from .clubs.physics import (
@@ -534,6 +535,7 @@ def _cleanup_hardware_for_shutdown() -> bool:
         _run_shutdown_step("BLE publisher stop", ble_publisher.stop)
 
     _run_shutdown_step("launch monitor stop", stop_monitor)
+    _run_shutdown_step("Supabase link stop", _supabase_link.stop)
 
     for connector in sim_connectors:
         _run_shutdown_step(f"simulator connector stop ({connector.name})", connector.stop)
@@ -2712,6 +2714,18 @@ def handle_clear_session(data=None):
     apply_clear_session(data)
 
 
+@app.route("/api/cloud/status", methods=["GET"])
+def api_cloud_status():
+    """Supabase uploads: online, offline, needs_attention or not_set_up, and shots waiting."""
+    return jsonify(_supabase_link.status().to_dict())
+
+
+@socketio.on("get_cloud_status")
+def handle_get_cloud_status():
+    """Send the Supabase upload status (also sent as ``cloud_status`` on every change)."""
+    socketio.emit("cloud_status", _supabase_link.status().to_dict())
+
+
 @socketio.on("upload_cloud")
 def handle_upload_cloud():
     """Manually trigger upload of completed session logs."""
@@ -4175,6 +4189,7 @@ def _finalize_shot_detected(
                     ),
                 },
             )
+            _supabase_link.notify_shot()
     except Exception as e:
         logger.warning("[SERVER] Failed to log shot: %s", e, exc_info=True)
         log_session_error(
@@ -4902,24 +4917,59 @@ def _cloud_raw_uploads_enabled() -> bool:
         return False
 
 
+def _load_supabase_config_or_none():
+    """This Pi's Supabase upload config, or None if absent or unreadable. Never raises."""
+    try:
+        from .cloud.supabase.config import load_supabase_config
+
+        return load_supabase_config()
+    except Exception:  # pylint: disable=broad-exception-caught
+        return None
+
+
 def _fire_cloud_push(session_logger):
     """Best-effort, non-blocking cloud push on session end.
 
     Fully guarded: the uploader is opt-in and must never delay or break the
     shot/session path. The systemd timer is the safety net if this no-ops.
+    Runs when FlightWeb or Supabase uploads are active.
     """
     try:
-        from .cloud.config import load_config
+        from .cloud.config import CloudConfig, load_config
         from .cloud.trigger import fire_push_async
 
-        config = load_config()
-        if config is None or not config.is_active():
-            return
         log_dir = getattr(session_logger, "log_dir", None)
         if log_dir is not None:
-            fire_push_async(config, log_dir=log_dir)
+            fire_push_async(
+                load_config() or CloudConfig(),
+                log_dir=log_dir,
+                supabase_config=_load_supabase_config_or_none(),
+            )
     except Exception:  # pylint: disable=broad-exception-caught
         pass
+
+
+def _resolve_supabase_link():
+    """The active Supabase config and session log dir, or (None, None, why not)."""
+    config = _load_supabase_config_or_none()
+    if config is None or not config.is_configured():
+        return None, None, "Supabase is not set up"
+    if not config.enabled:
+        return None, None, "Supabase uploads are off"
+    session_logger = get_session_logger()
+    if session_logger is None or not session_logger.enabled:
+        return None, None, "session logging is off"
+    return config, Path(session_logger.log_dir), ""
+
+
+def _emit_cloud_status(status) -> None:
+    socketio.emit("cloud_status", status.to_dict())
+
+
+# Online/offline state of Supabase uploads. notify_shot() after each logged
+# shot never blocks; probes and pushes run on the link's own thread, started in
+# main() and stopped at shutdown.
+_supabase_link = SupabaseLink(_resolve_supabase_link, on_change=_emit_cloud_status)
 
 
 def _run_cloud_push_for_ui():
@@ -6072,6 +6122,7 @@ def main():
     else:
         init_session_logger(enabled=False)
         print("Session logging DISABLED")
+    _supabase_link.start()
 
     if ballistics_enabled:
         print("Ballistic carry model: ENABLED (simulator + drag/Magnus)")
