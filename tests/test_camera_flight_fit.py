@@ -41,11 +41,12 @@ def make_clip(
     flies: bool = True,
     still_club: bool = False,
     drop_after: int | None = None,
+    fps: float = FPS,
 ):
     """Frames, timestamps and trigger index of a dim garage-like swing."""
     geometry = geometry or CameraGeometry()
     rng = np.random.default_rng(seed)
-    step_ns = int(1e9 / FPS)
+    step_ns = int(1e9 / fps)
     stamps = np.arange(frames, dtype=np.int64) * step_ns
     if drop_after is not None:
         stamps[drop_after:] += 3 * step_ns
@@ -207,3 +208,12 @@ def test_missing_clip_is_a_status_not_an_exception(tmp_path):
     assert not result.accepted
     assert result.status.startswith("clip_unreadable")
     assert ff.clip_trigger_timestamp(tmp_path / "nope") is None
+
+
+def test_a_faster_camera_fits_more_frames_in_the_same_window():
+    frames, stamps, trig = make_clip(3.0, 14.0, frames=75, fps=300.0)
+    result = ff.measure_launch(frames, stamps, trig, SPEED_MPS, CameraGeometry())
+    assert result.accepted, result.status
+    assert result.hla_axis_deg == pytest.approx(3.0, abs=0.3)
+    assert result.vla_deg == pytest.approx(14.0, abs=0.4)
+    assert result.moving_frames > 12  # 230 fps gives ~12 in the same 53 ms

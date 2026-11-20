@@ -44,9 +44,11 @@ BALL_DIAMETER_M = 0.04267
 # and the resting ball. A clip holds ~36 frames before the trigger.
 QUIET_FRAMES = 12
 # Flight frames: one before the trigger (it fires about a frame before impact)
-# to twelve after; by then a full shot has left the top of the view.
+# through FLIGHT_WINDOW_S after it, twelve frames at 230 fps; by then a full
+# shot has left the top of the view. In time, not frames, so a faster camera
+# setting simply fits more frames.
 FRAMES_BEFORE_TRIGGER = 1
-FRAMES_AFTER_TRIGGER = 12
+FLIGHT_WINDOW_S = 0.053
 BLOB_SIGMA_PX = 2.5
 # Within this distance of the tee the ball still overlaps its resting spot,
 # which the background subtraction has removed: those samples don't score.
@@ -448,7 +450,9 @@ def measure_launch(
     if frames.ndim != 3 or len(frames) != len(timestamps_ns):
         return CameraLaunch(accepted=False, status="bad_clip")
     first = trigger_index - FRAMES_BEFORE_TRIGGER
-    last = min(trigger_index + FRAMES_AFTER_TRIGGER, len(frames) - 1)
+    after = (timestamps_ns.astype(np.int64) - int(timestamps_ns[trigger_index])) / 1e9
+    last = int(np.searchsorted(after, FLIGHT_WINDOW_S, side="right")) - 1
+    last = min(max(last, trigger_index), len(frames) - 1)
     if first < QUIET_FRAMES or last - first < MIN_MOVING_FRAMES:
         return CameraLaunch(accepted=False, status="clip_too_short")
     quiet = frames[:QUIET_FRAMES].astype(np.float32)
