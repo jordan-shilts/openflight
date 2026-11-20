@@ -215,6 +215,13 @@ class Shot:
             (TI radar measured without an OPS243; see /api/shots/measured)
         readings_data: Serialized readings for session logging
         camera_replay: Public replay metadata for a matched high-speed capture
+        club_speed_source: What measured club_speed_mph on a recorder-posted
+            swing ("ops243"); None on OPS-path shots, whose club speed is
+            always the OPS243's
+        camera_launch: The swing recorder's camera ball-flight fit for this
+            shot (angles, aim, hits/frames, t0, fit score), kept for analysis
+        radar_launch: The radar's own launch reading on a recorder-posted
+            swing whose camera reading replaced it, kept for analysis
     """
 
     ball_speed_mph: float
@@ -223,6 +230,7 @@ class Shot:
     impact_timestamp: Optional[float] = None
     impact_timestamp_kld7: Optional[float] = None
     club_speed_mph: Optional[float] = None
+    club_speed_source: Optional[str] = None  # "ops243" on a recorder-posted swing
     # Raw OPS radial ball speed, kept when the cosine correction rewrites
     # ball_speed_mph (radar bin anchoring must keep using the radial value)
     ball_speed_raw_mph: Optional[float] = None
@@ -312,6 +320,9 @@ class Shot:
     delivery_club_path_source: Optional[str] = None  # "measured" or "camera"
     delivery_attack_angle_source: Optional[str] = None  # "measured", "camera" or "typical"
     inclinometer: Optional[dict] = None  # Stable enclosure orientation used for this shot
+    # Recorder diagnostics, both readings side by side (see /api/shots/measured).
+    camera_launch: Optional[dict] = None
+    radar_launch: Optional[dict] = None
     # UI side view only: kept out of to_dict(), so session logs and cloud uploads skip it.
     trajectory: Optional[dict] = field(default=None, repr=False)
 
@@ -407,6 +418,7 @@ class Shot:
             "ball_speed_mph": self.ball_speed_mph,
             "ball_speed_raw_mph": self.ball_speed_raw_mph,
             "club_speed_mph": self.club_speed_mph,
+            "club_speed_source": self.club_speed_source,
             "smash_factor": self.smash_factor,
             "estimated_carry_yards": self.estimated_carry_yards,
             "carry_range": list(self.estimated_carry_range),
@@ -461,6 +473,8 @@ class Shot:
             "delivery_club_path_source": self.delivery_club_path_source,
             "delivery_attack_angle_source": self.delivery_attack_angle_source,
             "inclinometer": self.inclinometer,
+            "camera_launch": dict(self.camera_launch) if self.camera_launch else None,
+            "radar_launch": dict(self.radar_launch) if self.radar_launch else None,
             "spin_rpm": self.spin_rpm,
             "spin_rpm_measured": self.spin_rpm_measured,
             "spin_source": self.spin_source,

@@ -18,7 +18,6 @@ from collections import deque
 from dataclasses import asdict, dataclass, fields, replace
 from datetime import datetime
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Callable, List, Optional
 
 from flask import Flask, Response, jsonify, request, send_file, send_from_directory
@@ -53,6 +52,7 @@ from .clubs.physics import (
 )
 from .d_plane import estimate_club_delivery
 from .launch_monitor import SPIN_CONFIDENCE_HIGH, SPIN_CONFIDENCE_RELIABLE, Shot, summarize_shots
+from .measured_shot import ClubDelivery, parse_measured_shot
 from .measuring_status import (
     OFFLINE,
     READY,
@@ -76,7 +76,7 @@ from .phone_orientation import (
 )
 from .power import SUPPORTED_BATTERY_PROVIDERS, PowerMonitor, PowerStatus
 from .profiles import ProfileStore
-from .rig_setup import RigSetupError, RigSetupStore
+from .rig_setup import CAMERA_AIMED_STATUSES, RigSetupError, RigSetupStore
 from .rolling_buffer.monitor import estimate_carry_with_spin, get_optimal_spin_for_ball_speed
 from .session_logger import get_session_logger, init_session_logger, log_session_error
 from .shot_stream import SSE_MIMETYPE, ShotStreamBroker, ShotStreamFull
@@ -1040,14 +1040,29 @@ single_channel_max_spread_deg: float | None = None
 wood_spin_axis_enabled = False
 
 
+def _has_club_data(shot: Shot) -> bool:
+    """Whether anything measured the club: its speed, path or attack angle."""
+    return any(
+        value is not None
+        for value in (
+            shot.club_speed_mph,
+            shot.club_path_deg,
+            shot.club_angle_deg,
+            shot.experimental_fused_club_path_deg,
+            shot.experimental_fused_attack_angle_deg,
+        )
+    )
+
+
 def shot_to_dict(shot: Shot) -> dict:
     """Return the UI shot schema with display-oriented rounding."""
     data = shot.to_dict()
     for log_only_field in ("mode", "readings", "readings_count"):
         data.pop(log_only_field)
-    if shot.mode == MEASURED_SHOT_MODE:
-        # The one mode the UI lays out differently: a radar-only swing has no
-        # club data, so Live shows it as one row of five tiles.
+    if shot.mode == MEASURED_SHOT_MODE and not _has_club_data(shot):
+        # The one mode the UI lays out differently: a measured swing without
+        # club data shows on Live as one row of five tiles. With club speed or
+        # a camera club delivery it gets the full grid, like an OPS shot.
         data["mode"] = shot.mode
     for field, digits in {
         "ball_speed_mph": 1,
@@ -1954,75 +1969,13 @@ def _stream_catch_up(last_event_id) -> list[tuple[str, bytes]] | None:
         return None
 
 
+# The mode of a swing posted by the recorder (see openflight.measured_shot). The
+# name predates its camera: such a swing may also carry camera launch, camera
+# club delivery and OPS243 club speed.
 MEASURED_SHOT_MODE = "radar-only"
-_MEASURED_BALL_SPEED_MPH = (5.0, 250.0)
-_MEASURED_LAUNCH_DEG = (-30.0, 80.0)
-_MEASURED_HORIZONTAL_DEG = (-45.0, 45.0)
-_MEASURED_COMPONENT_STD_DEG = (0.0, 90.0)
-_MEASURED_COHERENCE = (0.0, 1.0)
-_MEASURED_PHASE_RAD = (-math.pi, math.pi)
+# experimental_fused_status of a club delivery the recorder measured with its camera.
+RECORDER_CAMERA_DELIVERY_STATUS = "recorder_camera"
 _LOCAL_ADDRESSES = frozenset({"127.0.0.1", "::1"})
-
-
-def _measured_number(
-    payload: dict, key: str, bounds: tuple[float, float], *, required: bool
-) -> float | None:
-    """One validated number from a measured-shot payload; ValueError names the field."""
-    value = payload.get(key)
-    if value is None:
-        if required:
-            raise ValueError(f"{key} is required")
-        return None
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
-        raise ValueError(f"{key} must be a number")
-    low, high = bounds
-    if not low <= value <= high:
-        raise ValueError(f"{key} must be between {low:g} and {high:g}")
-    return float(value)
-
-
-def _measured_launch(payload: dict) -> SimpleNamespace | None:
-    """LCMF-v1 launch evidence from a measured-shot payload, shaped for
-    ``_apply_radar_launch``; None when no launch angle was measured.
-
-    Horizontal launch only comes with an accepted vertical measurement, as in
-    the live IWR6843 path, and confidences are derived here from the radar's
-    own evidence rather than trusted from the caller.
-    """
-    vertical = _measured_number(
-        payload, "launch_angle_vertical", _MEASURED_LAUNCH_DEG, required=False
-    )
-    horizontal = _measured_number(
-        payload, "launch_angle_horizontal", _MEASURED_HORIZONTAL_DEG, required=False
-    )
-    if vertical is None:
-        if horizontal is None:
-            return None
-        # Sideways rests on the ball track alone; the recorder sends it when
-        # the vertical was withheld and the club/speed estimate fills that in.
-        return SimpleNamespace(
-            angle_deg=None,
-            single_channel=False,
-            component_std_deg=None,
-            horizontal_deg=horizontal,
-            horizontal_confidence=_measured_number(
-                payload, "horizontal_coherence", _MEASURED_COHERENCE, required=False
-            ),
-        )
-    single_channel = payload.get("vertical_single_channel", False)
-    if not isinstance(single_channel, bool):
-        raise ValueError("vertical_single_channel must be true or false")
-    return SimpleNamespace(
-        angle_deg=vertical,
-        single_channel=single_channel,
-        component_std_deg=_measured_number(
-            payload, "vertical_component_std_deg", _MEASURED_COMPONENT_STD_DEG, required=False
-        ),
-        horizontal_deg=horizontal,
-        horizontal_confidence=_measured_number(
-            payload, "horizontal_coherence", _MEASURED_COHERENCE, required=False
-        ),
-    )
 
 
 def _measured_source_error():
@@ -2078,44 +2031,91 @@ def post_measuring_status():
 def post_measured_shot():
     """Accept a swing measured outside the OPS path while the kiosk runs --mock.
 
-    Until the OPS243 is fitted, the camera-triggered TI radar recorder measures
-    ball speed (and launch angle once the rig geometry is known) and posts each
-    swing here, so it shows on the kiosk like any shot. Only the Pi itself may
-    post, and only in mock mode (see ``_measured_source_error``). Anything the
-    payload leaves out (launch angle, spin, carry) falls back to the usual
-    estimates.
+    The camera-triggered swing recorder measures ball speed with the TI radar,
+    launch angles with the radar or its camera's ball-flight fit (each axis
+    names its sensor), and optionally club path/attack angle from the camera
+    and club speed from the OPS243, then posts each swing here so it shows on
+    the kiosk like any shot. Only the Pi itself may post, and only in mock mode
+    (see ``_measured_source_error``). Every field is validated before anything
+    is recorded; a bad one refuses the whole post with a 400 naming it.
+    Anything the payload leaves out (launch angle, club data, spin, carry)
+    falls back to the usual estimates, or stays empty where nothing honest can
+    stand in (club speed, club path).
     """
     refused = _measured_source_error()
     if refused is not None:
         return refused
-    payload = request.get_json(silent=True)
-    if not isinstance(payload, dict):
-        return jsonify({"error": "Send a JSON object"}), 400
     try:
-        ball_speed = _measured_number(
-            payload, "ball_speed_mph", _MEASURED_BALL_SPEED_MPH, required=True
-        )
-        launch = _measured_launch(payload)
-        horizontal_phase = _measured_number(
-            payload, "horizontal_phase_rad", _MEASURED_PHASE_RAD, required=False
-        )
+        swing = parse_measured_shot(request.get_json(silent=True))
     except ValueError as error:
         return jsonify({"error": str(error)}), 400
 
     shot = Shot(
-        ball_speed_mph=ball_speed,
+        ball_speed_mph=swing.ball_speed_mph,
         timestamp=datetime.now(),
         club=monitor.current_club,
         mode=MEASURED_SHOT_MODE,
+        club_speed_mph=swing.club_speed_mph,
+        club_speed_source=swing.club_speed_source,
+        camera_launch=swing.camera_launch,
+        radar_launch=swing.radar_launch,
     )
-    if launch is not None:
-        _apply_radar_launch(shot, launch)
+    if swing.launch.radar is not None:
+        _apply_radar_launch(shot, swing.launch.radar)
+    _apply_camera_launch(
+        shot,
+        swing.launch.camera_vertical_deg,
+        swing.launch.camera_horizontal_deg,
+        swing.camera_launch,
+    )
+    if swing.club_delivery is not None:
+        _apply_recorder_club_delivery(shot, swing.club_delivery)
+    _log_measured_shot_sources(shot)
     monitor.record_measured_shot(shot)
-    if horizontal_phase is not None:
+    rig_changed = False
+    if swing.horizontal_phase_rad is not None:
         # The start line before any zero: what Setup's "Set straight" averages.
-        get_rig_setup_store().observe_horizontal_phase(horizontal_phase)
+        # The radar's sideways needs that zero; a camera sideways never does.
+        get_rig_setup_store().observe_horizontal_phase(swing.horizontal_phase_rad)
+        rig_changed = True
+    aim_status = (swing.camera_launch or {}).get("aim_status")
+    if aim_status is not None:
+        # Setup shows "moved" (the monitor turned: set straight again).
+        rig_changed |= get_rig_setup_store().observe_camera_aim(aim_status)
+    if rig_changed:
         _publish_rig_setup()
     return jsonify({"shot_number": shot.shot_number, "ball_speed_mph": shot.ball_speed_mph}), 201
+
+
+def _log_measured_shot_sources(shot: Shot) -> None:
+    """Say which sensor each measured value came from, camera and radar side by side."""
+    camera = shot.camera_launch or {}
+    radar = shot.radar_launch or {}
+    logger.info(
+        "[SERVER] Measured swing: vertical %s (%s), horizontal %s (%s); "
+        "camera fit %s (accepted %s) vla=%s hla=%s hits=%s/%s aim=%s; "
+        "radar read vla=%s hla=%s; "
+        "club speed %s (%s); club path %s, attack %s (%s)",
+        shot.launch_angle_vertical,
+        shot.launch_angle_vertical_source,
+        shot.launch_angle_horizontal,
+        shot.launch_angle_horizontal_source,
+        camera.get("status"),
+        camera.get("accepted"),
+        camera.get("vla_deg"),
+        camera.get("hla_deg"),
+        camera.get("hits"),
+        camera.get("frames"),
+        camera.get("aim_status"),
+        radar.get("vla_deg"),
+        radar.get("hla_deg"),
+        shot.club_speed_mph,
+        shot.club_speed_source,
+        shot.experimental_fused_club_path_deg,
+        shot.experimental_fused_attack_angle_deg,
+        shot.experimental_fused_club_path_confidence
+        or shot.experimental_fused_attack_angle_confidence,
+    )
 
 
 def _apply_rig_setup_to_iwr6843() -> None:
@@ -3345,6 +3345,98 @@ def _single_channel_launch_withheld(measurement) -> bool:
     return spread is not None and spread > single_channel_max_spread_deg
 
 
+# The recorder's camera fits one straight ball flight (horizontal, vertical,
+# start time) through the frames after impact. Its confidence grows with the
+# frames the fitted track found the ball in: CAMERA_FIT_FULL_CONFIDENCE_HITS or
+# more earns the ceiling, CAMERA_FIT_ZERO_CONFIDENCE_HITS or fewer only the
+# floor, linearly in between (like the radar's channel-spread score above).
+CAMERA_FIT_FULL_CONFIDENCE_HITS = 10
+CAMERA_FIT_ZERO_CONFIDENCE_HITS = 3
+
+
+def camera_fit_confidence(camera_launch: dict | None) -> float:
+    """Launch confidence of the camera's ball-flight fit, from its ball hits.
+
+    No diagnostics (or no hit count) means no evidence beyond the angle
+    itself: the floor, which still beats the table estimate.
+    """
+    hits = (camera_launch or {}).get("hits")
+    if hits is None:
+        score = 0.0
+    else:
+        span = CAMERA_FIT_FULL_CONFIDENCE_HITS - CAMERA_FIT_ZERO_CONFIDENCE_HITS
+        score = min(1.0, max(0.0, (hits - CAMERA_FIT_ZERO_CONFIDENCE_HITS) / span))
+    span = ANGLE_CONFIDENCE_CEILING - ANGLE_CONFIDENCE_FLOOR
+    return round(ANGLE_CONFIDENCE_FLOOR + span * score, 3)
+
+
+def camera_horizontal_confidence(camera_launch: dict | None) -> float:
+    """Horizontal launch confidence of the camera's fit.
+
+    A camera sideways angle is a start direction only against a target line
+    the recorder knows (``aim_status`` "set", or "scene_lost" with the last
+    good correction). Unaimed, moved since it was aimed (the recorder then
+    omits it), or with no aim reported, it is shown at the floor, which keeps
+    it below ``SPIN_AXIS_MIN_HORIZONTAL_CONFIDENCE`` so the D-plane derives no
+    spin axis from it.
+    """
+    if (camera_launch or {}).get("aim_status") not in CAMERA_AIMED_STATUSES:
+        return ANGLE_CONFIDENCE_FLOOR
+    return camera_fit_confidence(camera_launch)
+
+
+def _apply_camera_launch(
+    shot: Shot,
+    vertical_deg: float | None,
+    horizontal_deg: float | None,
+    camera_launch: dict | None,
+) -> None:
+    """Write the swing recorder's camera launch angles onto the shot.
+
+    The camera's own fit evidence (``camera_launch``) sets the confidences.
+    ``--max-single-channel-spread`` never applies: that gate judges the radar's
+    channels, and a camera angle has none.
+    """
+    if vertical_deg is not None:
+        shot.launch_angle_vertical = vertical_deg
+        shot.launch_angle_vertical_source = "camera"
+        shot.launch_angle_vertical_confidence = camera_fit_confidence(camera_launch)
+        shot.launch_angle_confidence = shot.launch_angle_vertical_confidence
+        shot.angle_source = "camera"
+    if horizontal_deg is not None:
+        shot.launch_angle_horizontal = horizontal_deg
+        shot.launch_angle_horizontal_confidence = camera_horizontal_confidence(camera_launch)
+        shot.launch_angle_horizontal_source = "camera"
+
+
+def _apply_recorder_club_delivery(shot: Shot, delivery: ClubDelivery) -> None:
+    """Hand the recorder's camera club path and attack angle to the D-plane.
+
+    They go where ``d_plane.trusted_club_path``/``trusted_attack_angle`` read
+    a camera delivery: the camera-fused fields, with the recorder's tier. At a
+    ``TRUSTED_DELIVERY_TIERS`` tier they drive face angle, lofts and spin axis
+    in ``_apply_club_delivery`` (source "camera"), and simulators get them; a
+    "low" one is shown as experimental only. ``club_path_deg``/``club_angle_deg``
+    stay a club radar's.
+    """
+    shot.experimental_fused_status = RECORDER_CAMERA_DELIVERY_STATUS
+    if delivery.club_path_deg is not None:
+        shot.experimental_fused_club_path_deg = delivery.club_path_deg
+        shot.experimental_fused_club_path_confidence = delivery.confidence
+    if delivery.attack_angle_deg is not None:
+        shot.experimental_fused_attack_angle_deg = delivery.attack_angle_deg
+        shot.experimental_fused_attack_angle_confidence = delivery.confidence
+
+
+def _carries_recorder_camera_results(shot: Shot) -> bool:
+    """Whether the recorder already measured this swing with its camera."""
+    return (
+        shot.launch_angle_vertical_source == "camera"
+        or shot.launch_angle_horizontal_source == "camera"
+        or shot.experimental_fused_status == RECORDER_CAMERA_DELIVERY_STATUS
+    )
+
+
 def _snapshot_inclinometer_for_shot(shot: Shot) -> None:
     """Attach the stable pre-impact enclosure orientation used by this shot."""
     if inclinometer_service is None or shot.mode == "mock":
@@ -4145,11 +4237,14 @@ def _enrich_shot_from_optional_hardware(shot: Shot) -> _ShotEnrichmentResult:
     _attach_camera_replay(shot, camera_capture)
     _observe_camera_ball(camera_capture)
 
-    # A radar-only swing comes from the recorder, which owns the camera. With no
+    # A measured swing comes from the recorder, which owns the camera. With no
     # clip here there is nothing to fuse, and "rejected: no camera capture"
-    # would only be noise on the club tiles.
-    radar_only_without_clip = shot.mode == MEASURED_SHOT_MODE and camera_capture is None
-    if shot.mode != "mock" and not radar_only_without_clip:
+    # would only be noise on the club tiles; when the recorder already measured
+    # it with its camera, kiosk fusion would only overwrite those results.
+    recorder_owns_camera_analysis = shot.mode == MEASURED_SHOT_MODE and (
+        camera_capture is None or _carries_recorder_camera_results(shot)
+    )
+    if shot.mode != "mock" and not recorder_owns_camera_analysis:
         camera_analysis_ms = _fuse_camera_measurements(shot, camera_capture)
 
     return _ShotEnrichmentResult(
