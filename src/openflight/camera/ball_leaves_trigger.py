@@ -16,6 +16,13 @@ of the zone), or on very strong motion that no tracked spot explains, it falls
 back to the motion trigger, so a swing is never ignored just because the ball
 can't be seen. Temporary, until the OPS243 speed radar gives a strike signal of
 its own.
+
+Only round, ball-sized spots count. In the garage (2026-11-15) the camera sits
+behind the ball and a lamp beside it lights the club: at address the clubhead
+hides the ball, the shaft's glints became tracked spots, and when the club moved
+they vanished and fired "ball left" on the takeaway. Shaft glints are thin
+streaks or specks; a ball is a compact blob. For the same reason a ball covered
+slowly is kept for several seconds, the length of an address, not one.
 """
 
 from __future__ import annotations
@@ -25,6 +32,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 import numpy as np
+from scipy import ndimage
 
 from openflight.camera.motion_trigger import MotionSample, MotionTrigger, MotionTriggerSettings
 
@@ -51,14 +59,33 @@ class BallLeavesSettings:
     # Club motion needed in the zone at the same time, as a share of the motion
     # trigger's own threshold (light flicker moves no club).
     motion_share: float = 0.5
-    # A ball covered slowly (a waggle) is kept this long before it is presumed
-    # moved and searched for again.
-    keep_covered_s: float = 1.0
+    # A ball covered slowly (a waggle, or the clubhead soled in front of it at
+    # address when the camera is behind the ball) is kept this long before it is
+    # presumed moved and searched for again.
+    keep_covered_s: float = 8.0
     # Without a resting ball for this long, use the motion trigger instead.
     fallback_after_s: float = 3.0
+    # After a struck ball, neither fallback fires for this long. There is no
+    # ball on the mat until the next one is teed, so the motion fallback used
+    # to fire on the golfer stepping in to re-tee ~5 s after every shot
+    # (2026-11-19: 40 such captures in 173 triggers, none a real shot). Each
+    # cost a radar readout that collided with the last one or with the next
+    # swing (short dumps, ~13 s deaf). The quickest real shot came 12.1 s
+    # after the one before; a newly teed ball still fires "ball left".
+    fallback_hold_after_shot_s: float = 10.0
     # Spots tracked at once (the ball plus glints, tees, a second ball).
     max_spots: int = 6
     min_spot_gap_px: int = 10
+    # A spot's shape, taken where it is a fifth of the way from the ring around
+    # it to its peak (low enough to take in the shaded side of a ball lit from
+    # one side): a ball is a compact blob of at least this many pixels ...
+    spot_shape_level: float = 0.2
+    min_spot_area_px: int = 15
+    # ... no longer than this many times its width (balls 1.5-2.5 in three
+    # rooms, shaft glints 3.15 and up, a lamp-stand leg 3.5) ...
+    max_spot_elongation: float = 2.8
+    # ... and fits inside a square this many pixels either side of its centre.
+    spot_reach_px: int = 16
     # Motion this many times the motion trigger's threshold fires even when no
     # tracked spot vanished: a swing whose ball the tracker never picked up.
     strong_motion_factor: float = 3.0
@@ -110,6 +137,7 @@ class BallLeavesTrigger:
         self._spots: list[_Spot] = []
         self._cooldown_until = float("-inf")
         self._last_ball_s = float("-inf")
+        self._last_shot_s = float("-inf")
         self._started_s: float | None = None
 
     @property
@@ -135,8 +163,40 @@ class BallLeavesTrigger:
         x, y, w, h = self.settings.roi
         return round(height * y), round(height * (y + h)), round(width * x), round(width * (x + w))
 
+    def _ball_shaped(self, image: np.ndarray, row: int, column: int) -> bool:
+        """Whether the spot at (row, column) is a round, ball-sized blob."""
+        bs = self.ball_settings
+        reach = bs.spot_reach_px
+        top, left = max(0, row - reach), max(0, column - reach)
+        patch = image[top : row + reach + 1, left : column + reach + 1].astype(np.float64)
+        center = (row - top, column - left)
+        ring_box = image[max(0, row - 7) : row + 8, max(0, column - 7) : column + 8]
+        inner_box = image[max(0, row - 3) : row + 4, max(0, column - 3) : column + 4]
+        ring_count = ring_box.size - inner_box.size
+        if ring_count <= 0:
+            return False
+        ring = (float(ring_box.sum(dtype=np.float64)) - float(inner_box.sum(dtype=np.float64))) / ring_count
+        core = patch[max(0, center[0] - 1) : center[0] + 2, max(0, center[1] - 1) : center[1] + 2]
+        peak = float(core.max())
+        if peak <= ring:
+            return False
+        labels, _count = ndimage.label(patch >= ring + bs.spot_shape_level * (peak - ring))
+        offset = np.unravel_index(int(np.argmax(core)), core.shape)
+        label = labels[max(0, center[0] - 1) + offset[0], max(0, center[1] - 1) + offset[1]]
+        if label == 0:
+            return False
+        rows, columns = np.nonzero(labels == label)
+        if len(rows) < bs.min_spot_area_px:
+            return False
+        if rows.min() == 0 or columns.min() == 0:
+            return False  # runs out of the patch: a line or a large patch of light
+        if rows.max() == patch.shape[0] - 1 or columns.max() == patch.shape[1] - 1:
+            return False
+        spread = np.linalg.eigvalsh(np.cov(np.vstack((rows, columns)).astype(np.float64)))
+        return float(np.sqrt(spread[1] / max(spread[0], 1e-6))) <= bs.max_spot_elongation
+
     def _find_spots(self, image: np.ndarray) -> list[tuple[tuple[int, int], float]]:
-        """The brightest compact spots in the zone, strongest first."""
+        """The brightest round, ball-sized spots in the zone, strongest first."""
         top, bottom, left, right = self._zone_box(image.shape)
         zone = image[top:bottom, left:right].astype(np.float64)
         if zone.shape[0] < 20 or zone.shape[1] < 20:
@@ -148,13 +208,18 @@ class BallLeavesTrigger:
         bs = self.ball_settings
         found = []
         gap = bs.min_spot_gap_px
-        for _ in range(bs.max_spots):
+        # Glints that fail the shape test don't use up the spot slots, but the
+        # search stops after a bounded number of looks.
+        for _ in range(bs.max_spots * 4):
+            if len(found) >= bs.max_spots:
+                break
             row, column = np.unravel_index(int(np.argmax(contrast)), contrast.shape)
             best = float(contrast[row, column])
             if best < bs.min_ball_contrast:
                 break
-            found.append(((int(row) + top, int(column) + left), best))
             contrast[max(0, row - gap) : row + gap + 1, max(0, column - gap) : column + gap + 1] = 0
+            if self._ball_shaped(image, int(row) + top, int(column) + left):
+                found.append(((int(row) + top, int(column) + left), best))
         return found
 
     def _find_ball(self, image: np.ndarray) -> tuple[tuple[int, int], float] | None:
@@ -271,7 +336,8 @@ class BallLeavesTrigger:
         if self.tracked:
             self._last_ball_s = now
 
-        if not fired and armed:
+        held = now - self._last_shot_s < bs.fallback_hold_after_shot_s
+        if not fired and armed and not held:
             no_ball_for = now - max(self._last_ball_s, self._started_s)
             if no_ball_for >= bs.fallback_after_s and sample.fraction >= self.settings.min_fraction:
                 fired, reason = True, "motion (no resting ball seen)"
@@ -280,6 +346,8 @@ class BallLeavesTrigger:
         if fired:
             self._cooldown_until = now + self.settings.cooldown_s
             self.last_reason = reason
+            if reason == "ball left":
+                self._last_shot_s = now
         return MotionSample(
             fraction=sample.fraction,
             threshold=sample.threshold,

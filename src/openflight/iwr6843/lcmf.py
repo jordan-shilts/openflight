@@ -824,6 +824,7 @@ def _tx2_colocated_horizontal(
     phase_velocity_ms: float | None = None,
     prepared: PreparedLCMFCapture | None = None,
     max_range_m: float = HORIZONTAL_COLOCATED_MAX_RANGE_M,
+    min_coherence: float = HORIZONTAL_COHERENCE_MIN,
 ) -> tuple[float | None, float | None, str | None, float | None]:
     """HLCMF-v2: horizontal launch that a floor reflection cannot bend.
 
@@ -875,9 +876,24 @@ def _tx2_colocated_horizontal(
     angle_deg, coherence = _referenced_horizontal_mean(
         phases, weights, phase_reference_rad=phase_reference_rad
     )
-    if coherence < HORIZONTAL_COHERENCE_MIN:
+    if coherence < min_coherence:
         return None, coherence, "hlcmf_v2_low_coherence", None
     return angle_deg, coherence, "hlcmf_v2_accepted", fused_phase_rad
+
+
+def _with_horizontal(
+    result: LCMFResult,
+    horizontal_deg: float | None,
+    horizontal_conf: float | None,
+    horizontal_status: str | None,
+    horizontal_phase_rad: float | None,
+) -> LCMFResult:
+    """A vertical rejection that still carries the horizontal estimate."""
+    result.horizontal_deg = horizontal_deg
+    result.horizontal_confidence = horizontal_conf
+    result.horizontal_status = horizontal_status
+    result.horizontal_phase_rad = horizontal_phase_rad
+    return result
 
 
 def estimate_lcmf_v1(
@@ -895,6 +911,7 @@ def estimate_lcmf_v1(
     track_override: BallTrack | None = None,
     track_override_scope: str = "burst",
     prepared: PreparedLCMFCapture | None = None,
+    horizontal_coherence_min: float = HORIZONTAL_COHERENCE_MIN,
 ) -> LCMFResult:
     """Estimate vertical launch from one TI dump and OPS ball speed.
 
@@ -973,11 +990,15 @@ def estimate_lcmf_v1(
             effective_loop_period_s=loop_period_s,
         )
 
+    # The horizontal estimate rests on the ball track alone. It is computed
+    # before the vertical and kept when the vertical then fails (garage,
+    # 2026-11-19: 22 of 44 coherent sideways readings were on swings whose
+    # vertical said insufficient_channel_snapshots and were thrown away).
+    horizontal_deg = horizontal_conf = horizontal_status = horizontal_phase_rad = None
     try:
         # OPS measures radial speed directly. TI range slope still supplies
         # position, but multipath-biased slope must not rotate TDM phase.
         phase_velocity_ms = ball_speed_mph / MPH_PER_MS
-        horizontal_phase_rad = None
         if horizontal_method == "colocated":
             (
                 horizontal_deg,
@@ -991,6 +1012,7 @@ def estimate_lcmf_v1(
                 phase_reference_rad=horizontal_phase_reference_rad,
                 phase_velocity_ms=phase_velocity_ms,
                 prepared=prepared,
+                min_coherence=horizontal_coherence_min,
             )
         else:
             horizontal_deg, horizontal_conf, horizontal_status = _tx2_horizontal_proxy(
@@ -1050,24 +1072,36 @@ def estimate_lcmf_v1(
             )
             components.update(fast)
     except (ValueError, IndexError, np.linalg.LinAlgError) as error:
-        return _result_from_track(
-            str(error).replace(" ", "_"),
-            shot,
-            cal=cal,
-            effective_tdm_tau_s=tdm_tau_s,
-            effective_loop_period_s=loop_period_s,
+        return _with_horizontal(
+            _result_from_track(
+                str(error).replace(" ", "_"),
+                shot,
+                cal=cal,
+                effective_tdm_tau_s=tdm_tau_s,
+                effective_loop_period_s=loop_period_s,
+            ),
+            horizontal_deg,
+            horizontal_conf,
+            horizontal_status,
+            horizontal_phase_rad,
         )
 
     raw_angle_deg, channels_used, single_channel = combine_channels(
         channel_components, channel_evidence
     )
     if raw_angle_deg is None:
-        return _result_from_track(
-            "rejected_no_conditioned_channel",
-            shot,
-            cal=cal,
-            effective_tdm_tau_s=tdm_tau_s,
-            effective_loop_period_s=loop_period_s,
+        return _with_horizontal(
+            _result_from_track(
+                "rejected_no_conditioned_channel",
+                shot,
+                cal=cal,
+                effective_tdm_tau_s=tdm_tau_s,
+                effective_loop_period_s=loop_period_s,
+            ),
+            horizontal_deg,
+            horizontal_conf,
+            horizontal_status,
+            horizontal_phase_rad,
         )
     measured = measured_channels(channel_components, channel_evidence)
     status = "accepted_low_confidence_recovery" if recovery_override else "accepted"

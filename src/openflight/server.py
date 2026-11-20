@@ -92,7 +92,7 @@ from .sim import (
     resolve_shot,
 )
 from .speed_correction import correct_ball_speed
-from .spin_estimate import calculated_spin_rpm
+from .spin_estimate import calculated_spin_rpm, club_anchored_spin_rpm
 from .startup_status import StartupStatusReporter, configured_startup_components
 from .status_led import (
     StatusLight,
@@ -1027,6 +1027,13 @@ ball_speed_correction_enabled = False
 ball_speed_correction_distance_ft = 5.5
 ball_speed_correction_ball_above_radar_ft = -4.0 / 12.0
 calculated_spin_enabled = False
+# Which calculated-spin model --calculated-spin uses: "kinematic" or "club-anchored".
+SPIN_MODEL_KINEMATIC = "kinematic"
+SPIN_MODEL_CLUB_ANCHORED = "club-anchored"
+spin_model = SPIN_MODEL_KINEMATIC
+# --max-single-channel-spread: a single-channel vertical launch whose two
+# channels disagreed by more than this many degrees is withheld (None = off).
+single_channel_max_spread_deg: float | None = None
 # Derive a spin axis for drivers, woods and hybrids too. Off by default: an
 # off-centre strike on those clubs tilts the axis as much as the D-plane does
 # (gear effect), and nothing measures strike location. See openflight.d_plane.
@@ -1989,9 +1996,19 @@ def _measured_launch(payload: dict) -> SimpleNamespace | None:
         payload, "launch_angle_horizontal", _MEASURED_HORIZONTAL_DEG, required=False
     )
     if vertical is None:
-        if horizontal is not None:
-            raise ValueError("launch_angle_horizontal needs launch_angle_vertical")
-        return None
+        if horizontal is None:
+            return None
+        # Sideways rests on the ball track alone; the recorder sends it when
+        # the vertical was withheld and the club/speed estimate fills that in.
+        return SimpleNamespace(
+            angle_deg=None,
+            single_channel=False,
+            component_std_deg=None,
+            horizontal_deg=horizontal,
+            horizontal_confidence=_measured_number(
+                payload, "horizontal_coherence", _MEASURED_COHERENCE, required=False
+            ),
+        )
     single_channel = payload.get("vertical_single_channel", False)
     if not isinstance(single_channel, bool):
         raise ValueError("vertical_single_channel must be true or false")
@@ -3156,7 +3173,13 @@ def _apply_calculated_spin(shot: Shot) -> bool:
     rewritten with 170*v*sin(LA)^1.2. The displaced measured value is
     kept in spin_rpm_measured for offline scoring. Returns True when
     the shot was rewritten.
+
+    With ``--spin-model club-anchored`` the club's typical spin, adjusted
+    for ball speed and (when measured) launch, is used instead; see
+    _apply_club_anchored_spin.
     """
+    if spin_model == SPIN_MODEL_CLUB_ANCHORED:
+        return _apply_club_anchored_spin(shot)
     if shot.launch_angle_vertical is None:
         return False
     if shot.launch_angle_vertical_source not in ("radar", "camera"):
@@ -3174,6 +3197,37 @@ def _apply_calculated_spin(shot: Shot) -> bool:
         spin_calc,
         shot.ball_speed_mph,
         shot.launch_angle_vertical,
+        "%.0f rpm" % shot.spin_rpm_measured if shot.spin_rpm_measured else "none",
+    )
+    return True
+
+
+def _apply_club_anchored_spin(shot: Shot) -> bool:
+    """Replace spin with the club-anchored estimate (see spin_estimate.py).
+
+    A measured launch angle (radar or camera) adjusts it; a table estimate
+    does not. The displaced value is kept in spin_rpm_measured. The source
+    stays "calculated" so phones, BLE and reports keep their labels.
+    """
+    measured_launch = (
+        shot.launch_angle_vertical
+        if shot.launch_angle_vertical_source in ("radar", "camera")
+        else None
+    )
+    spin_calc = club_anchored_spin_rpm(shot.club, shot.ball_speed_mph, measured_launch)
+    if spin_calc is None:
+        return False
+    shot.spin_rpm_measured = shot.spin_rpm
+    shot.spin_rpm = spin_calc
+    shot.spin_confidence = SPIN_CONFIDENCE_HIGH
+    shot.spin_source = "calculated"
+    shot.spin_rejection_reason = None
+    logger.info(
+        "[SERVER] Club-anchored spin: %.0f rpm (%s, v=%.1f mph, LA=%s, measured was %s)",
+        spin_calc,
+        getattr(shot.club, "value", shot.club),
+        shot.ball_speed_mph,
+        "%.1f deg" % measured_launch if measured_launch is not None else "not measured",
         "%.0f rpm" % shot.spin_rpm_measured if shot.spin_rpm_measured else "none",
     )
     return True
@@ -3240,14 +3294,29 @@ def _apply_radar_launch(shot: Shot, measurement) -> None:
     reads, and optionally ``horizontal_deg``/``horizontal_confidence``. Shared by
     the live IWR6843 path and radar-only measured shots so both carry the same
     sources and confidences.
+
+    With --max-single-channel-spread set, a single-channel vertical whose
+    channels disagreed by more than that is left off the shot, so the club
+    and speed estimate stands in; the horizontal is still applied.
     """
-    shot.launch_angle_vertical = measurement.angle_deg
-    # Device-level provenance is retained in iwr6843_capture. The
-    # public Shot contract uses "radar" for all measured radar angles.
-    shot.launch_angle_vertical_source = "radar"
-    shot.launch_angle_vertical_confidence = vertical_confidence(measurement)
-    shot.launch_angle_confidence = shot.launch_angle_vertical_confidence
-    shot.angle_source = "radar"
+    if getattr(measurement, "angle_deg", None) is None:
+        pass  # sideways only: the estimate fills the vertical later
+    elif _single_channel_launch_withheld(measurement):
+        logger.info(
+            "[SERVER] Launch %.1f deg withheld: one channel's word, channels "
+            "%.1f deg apart (limit %.1f); the estimate stands in",
+            measurement.angle_deg,
+            measurement.component_std_deg,
+            single_channel_max_spread_deg,
+        )
+    else:
+        shot.launch_angle_vertical = measurement.angle_deg
+        # Device-level provenance is retained in iwr6843_capture. The
+        # public Shot contract uses "radar" for all measured radar angles.
+        shot.launch_angle_vertical_source = "radar"
+        shot.launch_angle_vertical_confidence = vertical_confidence(measurement)
+        shot.launch_angle_confidence = shot.launch_angle_vertical_confidence
+        shot.angle_source = "radar"
     horizontal_deg = getattr(measurement, "horizontal_deg", None)
     if horizontal_deg is not None:
         shot.iwr6843_horizontal_deg = horizontal_deg
@@ -3257,6 +3326,23 @@ def _apply_radar_launch(shot: Shot, measurement) -> None:
         shot.launch_angle_horizontal = horizontal_deg
         shot.launch_angle_horizontal_confidence = shot.iwr6843_horizontal_confidence
         shot.launch_angle_horizontal_source = "radar"
+
+
+def _single_channel_launch_withheld(measurement) -> bool:
+    """Whether --max-single-channel-spread withholds this vertical launch.
+
+    Garage, 2026-11-19: every 6-iron launch read at 21-31 deg was a
+    single-channel result whose two channels had disagreed by 4-12 deg of
+    spread (readings 9-25 deg apart); every two-channel result stayed at
+    5-18 deg. Only a measured disagreement counts: a single channel with no
+    second component (spread None) is kept.
+    """
+    if single_channel_max_spread_deg is None:
+        return False
+    if not getattr(measurement, "single_channel", False):
+        return False
+    spread = getattr(measurement, "component_std_deg", None)
+    return spread is not None and spread > single_channel_max_spread_deg
 
 
 def _snapshot_inclinometer_for_shot(shot: Shot) -> None:
@@ -5860,6 +5946,29 @@ def main():
         ),
     )
     parser.add_argument(
+        "--max-single-channel-spread",
+        type=float,
+        default=None,
+        metavar="DEG",
+        help=(
+            "Withhold a radar vertical launch that rests on one channel when the "
+            "two channels disagreed by more than DEG (component spread); the club "
+            "and speed estimate stands in and the horizontal launch is kept. "
+            "Off by default."
+        ),
+    )
+    parser.add_argument(
+        "--spin-model",
+        choices=("kinematic", "club-anchored"),
+        default="kinematic",
+        help=(
+            "Calculated-spin model. kinematic: 170*v*sin(LA)^1.2 (needs a measured "
+            "launch). club-anchored: the club's typical (TrackMan tour) spin, nudged "
+            "within limits for ball speed and measured launch; less sensitive to "
+            "launch-angle noise. club-anchored turns calculated spin on by itself."
+        ),
+    )
+    parser.add_argument(
         "--calculated-spin",
         action="store_true",
         help=(
@@ -6034,8 +6143,10 @@ def main():
     ball_speed_correction_ball_above_radar_ft = -args.kld7_radar_height_inches / 12.0
     global _VERTICAL_RADAR_GATE_BYPASS
     _VERTICAL_RADAR_GATE_BYPASS = args.kld7_vertical_raw
-    global calculated_spin_enabled
-    calculated_spin_enabled = args.calculated_spin
+    global calculated_spin_enabled, spin_model, single_channel_max_spread_deg
+    spin_model = args.spin_model
+    single_channel_max_spread_deg = args.max_single_channel_spread
+    calculated_spin_enabled = args.calculated_spin or spin_model == SPIN_MODEL_CLUB_ANCHORED
     global wood_spin_axis_enabled
     wood_spin_axis_enabled = args.wood_spin_axis
     ballistics_enabled = args.ballistics

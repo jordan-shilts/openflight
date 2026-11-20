@@ -14,7 +14,7 @@ gives the true time order and is treated as authoritative.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -40,6 +40,44 @@ FAST_SUPPORT_FRAC = 0.55  # of the most-inliers candidate
 LEADING_FAST_MIN_INLIERS = 12
 LEADING_FAST_MIN_SPAN_S = 0.009  # three 3 ms frames
 MAX_RADIAL_ACCEL = 200.0  # m/s^2 sanity for the quadratic refit
+# Ball vs clubhead without the club label (2026-11-15 garage): keeping only
+# the strongest peak per gate per loop hands the gate to the clubhead and the
+# golfer, which hang near the gate's near edge after impact; a 20% 5-iron's
+# ball drew a clean line to the end of the dump but held the detections for
+# only 14 ms. Several peaks per gate keep the ball's line whole; every
+# distinct line is then extracted and the ball is the fastest clean one: a
+# struck ball always leaves faster than the clubhead (smash factor above 1),
+# the flying tee is slower still, and the clubhead peels away while the ball
+# keeps going.
+BALL_PEAKS_PER_GATE = 3
+BALL_PEAK_MIN_SEP_BINS = 3
+BALL_MAX_LINES = 8  # the clubhead and golfer leave several near-parallel slow lines
+BALL_LINE_MIN_INLIERS = 14  # a sparser fast line is noise, not a ball
+BALL_LINE_MIN_SPAN_S = 0.012
+BALL_LINE_MAX_RMS_BINS = 0.45
+# The clubhead leaves at about 0.67-0.75 of ball speed (smash 1.35-1.5); only
+# lines within this share of the fastest are taken as the same object.
+BALL_SAME_OBJECT_FRAC = 0.92
+BALL_LEAD_TOLERANCE_S = 0.003  # one 3 ms frame
+# What separates the ball from the clubhead and golfer with the radar behind
+# the ball (685 saved swings, 2026-11-08..15): their lines read 45-58 mph and
+# move 0.2-0.8 m; balls read 61-145 mph and move 0.9-2 m. One floor for every
+# club: a soft 20% 5-iron read 62.8 mph. Slower balls cannot be told from
+# the golfer's motion with this radar.
+BALL_MIN_MS = FAST_TRACK_MS  # 26.5 m/s radial, 59 mph
+BALL_MIN_REACH_M = 0.4
+# Below this radial speed a line must travel further: the clubhead's
+# follow-through and the golfer's clutter read up to ~67 mph over 0.2-0.8 m,
+# while the soft 20% 5-iron (62.8 mph) travelled 0.88 m and every ball line
+# over 90 mph at least 1.4 m.
+BALL_SLOW_MS = 35.0  # 78 mph
+BALL_SLOW_MIN_REACH_M = 0.85
+# A second single-peak search with a full-swing floor: a fast ball line the
+# slower clutter would outvote. A candidate generator, not a club rule.
+BALL_FULL_SWING_MS = 40.0
+# A ball is seen entering the gates (or is already in flight when the dump
+# starts); a streak first seen deep in the gate mid-dump is not one.
+BALL_ENTRY_MARGIN_M = 0.3
 
 
 @dataclass
@@ -209,18 +247,48 @@ def loop_power(mti: np.ndarray) -> np.ndarray:
     return power.reshape(n_frames * n_loops, mti.shape[-1])
 
 
+def _gate_peaks(gate: np.ndarray, snr_min: float, count: int, min_sep: int) -> list[int]:
+    """Up to ``count`` local maxima above ``snr_min`` x the gate median, strongest first."""
+    base = float(np.median(gate)) + 1e-12
+    inner = gate[1:-1]
+    local = np.flatnonzero((inner >= gate[:-2]) & (inner >= gate[2:]) & (inner / base > snr_min)) + 1
+    picked: list[int] = []
+    for index in local[np.argsort(gate[local])[::-1]]:
+        if all(abs(int(index) - other) >= min_sep for other in picked):
+            picked.append(int(index))
+            if len(picked) == count:
+                break
+    return picked
+
+
+def _subbin(row: np.ndarray, j: int, lo: int, hi: int) -> float:
+    """Parabolic sub-bin refinement of the peak at ``j`` (local to ``row``)."""
+    peak = float(j)
+    if lo < j < hi - 1:
+        y_0, y_1, y_2 = row[j - 1], row[j], row[j + 1]
+        den = y_0 - 2 * y_1 + y_2
+        if den < 0 and abs((y_0 - y_2) / (2 * den)) < 1:
+            peak += (y_0 - y_2) / (2 * den)
+    return peak
+
+
 def _detections(
     power: np.ndarray,
     geo: Geometry,
     snr_min: float = 4.0,
     max_range_m: float | None = None,
     gates_m: tuple[tuple[float, float], ...] = BALL_GATES_M,
+    peaks_per_gate: int = 1,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Per-loop sub-bin peaks inside ``gates_m``, SNR-gated.
 
     ``max_range_m`` clamps the gates — set it just short of the NET so
     ball-riding-up-the-net motion never enters the track or angle fits.
+    ``peaks_per_gate`` above 1 keeps that many separate peaks per gate per
+    loop, so a weaker mover (the ball) is not hidden by a stronger one.
     """
+    if peaks_per_gate > 1:
+        return _multi_detections(power, geo, snr_min, max_range_m, gates_m, peaks_per_gate)
     n_samples = power.shape[1]
     res = geo.range_res_m
     loops_idx: list[int] = []
@@ -283,6 +351,40 @@ def _detections(
                     peak_local += (y_0 - y_2) / (2 * den)
             loops_idx.append(i)
             bins.append(geo.range_bin_start + peak_local)
+    return np.asarray(loops_idx), np.asarray(bins)
+
+
+def _multi_detections(
+    power: np.ndarray,
+    geo: Geometry,
+    snr_min: float,
+    max_range_m: float | None,
+    gates_m: tuple[tuple[float, float], ...],
+    peaks_per_gate: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """``_detections`` keeping several separate peaks per gate per loop."""
+    res = geo.range_res_m
+    n_loops = geo.n_loops
+    loops_idx: list[int] = []
+    bins: list[float] = []
+    for row_index, row in enumerate(power):
+        if geo.range_bin_starts is not None:
+            frame = row_index // n_loops
+            start, count = geo.frame_bin_start(frame), geo.frame_bin_count(frame)
+        else:
+            start, count = geo.range_bin_start, power.shape[1]
+        for lo_m, hi_m in gates_m:
+            if max_range_m is not None:
+                hi_m = min(hi_m, max_range_m)
+            if hi_m <= lo_m:
+                continue
+            g_lo = max(int(lo_m / res) - start, 0)
+            g_hi = min(int(hi_m / res) - start, count - 2)
+            if g_hi - g_lo < 3:
+                continue
+            for local in _gate_peaks(row[g_lo:g_hi], snr_min, peaks_per_gate, BALL_PEAK_MIN_SEP_BINS):
+                loops_idx.append(row_index)
+                bins.append(start + _subbin(row, g_lo + local, g_lo, g_hi))
     return np.asarray(loops_idx), np.asarray(bins)
 
 
@@ -403,3 +505,172 @@ def find_ball(
         low_confidence=bool(rms >= 0.45 or span_s < 0.012),
         quad_bins=quad,
     )
+
+
+def _best_line(times, bins, res, rng, iterations, speed_bounds_ms, tol):
+    """Most-inliers RANSAC line inside the speed bounds, or None."""
+    best = None
+    if times.size < 8:
+        return None
+    for _ in range(iterations):
+        i, j = rng.choice(times.size, 2, replace=False)
+        d_t = times[i] - times[j]
+        if abs(d_t) < 3e-3:
+            continue
+        slope = (bins[i] - bins[j]) / d_t
+        if not speed_bounds_ms[0] <= slope * res <= speed_bounds_ms[1]:
+            continue
+        icpt = bins[i] - slope * times[i]
+        inliers = np.abs(bins - (slope * times + icpt)) < tol
+        n_new = int(inliers.sum())
+        if n_new < 8 or (best is not None and n_new <= best[0]):
+            continue
+        design = np.vstack([times[inliers], np.ones(n_new)]).T
+        (sl2, ic2), *_ = np.linalg.lstsq(design, bins[inliers], rcond=None)
+        if not speed_bounds_ms[0] <= sl2 * res <= speed_bounds_ms[1]:
+            continue
+        resid = bins[inliers] - (sl2 * times[inliers] + ic2)
+        best = (
+            n_new,
+            float(sl2),
+            float(ic2),
+            float(np.sqrt((resid**2).mean())),
+            float(times[inliers].min()),
+            float(times[inliers].max()),
+        )
+    return best
+
+
+def _as_track(line, times, bins, res, tol) -> BallTrack:
+    n_inl, slope, icpt, rms, t_first, t_last = line
+    inl = np.abs(bins - (slope * times + icpt)) < tol
+    quad = None
+    if inl.sum() >= 10:
+        q2, q1, q0 = np.polyfit(times[inl], bins[inl], 2)
+        if abs(2.0 * q2 * res) < MAX_RADIAL_ACCEL:
+            quad = (float(q2), float(q1), float(q0))
+    return BallTrack(
+        speed_ms=slope * res,
+        slope_bins=slope,
+        intercept_bins=icpt,
+        rms_bins=rms,
+        n_inliers=n_inl,
+        t_first=t_first,
+        t_last=t_last,
+        low_confidence=bool(rms >= 0.45 or (t_last - t_first) < 0.012),
+        quad_bins=quad,
+    )
+
+
+def find_lines(
+    mti: np.ndarray,
+    geo: Geometry,
+    *,
+    iterations: int = 2500,
+    seed: int = 1,
+    max_range_m: float | None = None,
+    gates_m: tuple[tuple[float, float], ...] = BALL_GATES_M,
+    speed_bounds_ms: tuple[float, float] = SPEED_BOUNDS_MS,
+    max_lines: int = BALL_MAX_LINES,
+    peaks_per_gate: int = BALL_PEAKS_PER_GATE,
+) -> list[BallTrack]:
+    """Every distinct range walk in the gates, most-supported first.
+
+    Lines are taken one at a time, each from the detections the earlier
+    lines did not explain.
+    """
+    power = loop_power(mti)
+    loops_idx, bins = _detections(
+        power, geo, max_range_m=max_range_m, gates_m=gates_m, peaks_per_gate=peaks_per_gate
+    )
+    if loops_idx.size < 8:
+        return []
+    res = geo.range_res_m
+    n_loops = geo.n_loops
+    times = np.array([geo.loop_time(i // n_loops, i % n_loops) for i in loops_idx])
+    tol = 1.2 if geo.n_samples >= 128 else 0.8
+    rng = np.random.default_rng(seed)
+    left = np.ones(times.size, dtype=bool)
+    lines = []
+    for _ in range(max_lines):
+        line = _best_line(times[left], bins[left], res, rng, iterations, speed_bounds_ms, tol)
+        if line is None:
+            break
+        track = _as_track(line, times[left], bins[left], res, tol)
+        lines.append(track)
+        left &= np.abs(bins - (track.slope_bins * times + track.intercept_bins)) >= tol
+    return lines
+
+
+def _reach_m(line: BallTrack, res: float) -> float:
+    return line.slope_bins * (line.t_last - line.t_first) * res
+
+
+def _first_range_m(line: BallTrack, res: float) -> float:
+    return (line.slope_bins * line.t_first + line.intercept_bins) * res
+
+
+def ball_like(line: BallTrack, res: float, near_gate_m: float) -> bool:
+    """Whether a line can be the ball: fast, far-travelling, seen arriving, and solid.
+
+    The support thresholds are the ones the shot gate accepts (a full track,
+    or a thin one over a long span), so a picked line is never refused later.
+    """
+    span = line.t_last - line.t_first
+    solid = (line.n_inliers >= 28 and span >= 0.015) or (
+        line.n_inliers >= BALL_LINE_MIN_INLIERS and span >= 0.030
+    )
+    arrived = line.t_first <= BALL_LEAD_TOLERANCE_S or (
+        _first_range_m(line, res) <= near_gate_m + BALL_ENTRY_MARGIN_M
+    )
+    return (
+        solid
+        and span >= BALL_LINE_MIN_SPAN_S
+        and line.rms_bins < BALL_LINE_MAX_RMS_BINS
+        and line.speed_ms >= BALL_MIN_MS
+        and _reach_m(line, res)
+        >= (BALL_SLOW_MIN_REACH_M if line.speed_ms < BALL_SLOW_MS else BALL_MIN_REACH_M)
+        and arrived
+    )
+
+
+def pick_ball(
+    lines: list[BallTrack], res: float, near_gate_m: float = BALL_GATES_M[0][0]
+) -> BallTrack | None:
+    """The fastest ball-like line; with none, the best-supported line at ball speed.
+
+    Lines within BALL_SAME_OBJECT_FRAC of the fastest are the same object (a
+    second peak of the ball, or a scrap of its line the first fit missed):
+    the best-supported of them is the ball's read. Without a ball-like line,
+    the best-supported one at ball speed comes back marked low confidence,
+    so the line says what was seen but no shot is posted; slower lines are
+    the clubhead and the golfer, and no ball is reported.
+    """
+    balls = [line for line in lines if ball_like(line, res, near_gate_m)]
+    if balls:
+        fastest = max(line.speed_ms for line in balls)
+        same = [line for line in balls if line.speed_ms >= BALL_SAME_OBJECT_FRAC * fastest]
+        return max(same, key=lambda line: line.n_inliers)
+    fast = [line for line in lines if line.speed_ms >= BALL_MIN_MS]
+    if fast:
+        # shown as a low-confidence read, never posted as a shot
+        return replace(max(fast, key=lambda line: line.n_inliers), low_confidence=True)
+    return None
+
+
+def find_ball_any_club(
+    mti: np.ndarray, geo: Geometry, *, max_range_m: float | None = None, **kwargs
+) -> BallTrack | None:
+    """The ball's range walk, told from the clubhead by how it moves, not by the club label.
+
+    The single-peak search (find_ball at the club-free floor) stays in as one
+    more candidate: on some swings it holds the ball's line where the
+    several-peak lines are split up by the golfer's clutter.
+    """
+    lines = find_lines(mti, geo, max_range_m=max_range_m, **kwargs)
+    for floor in (BALL_MIN_MS, BALL_FULL_SWING_MS):
+        single = find_ball(mti, geo, max_range_m=max_range_m, min_ball_ms=floor, leading_fast_wins=True)
+        if single is not None:
+            lines.append(single)
+    gates = kwargs.get("gates_m", BALL_GATES_M)
+    return pick_ball(lines, geo.range_res_m, gates[0][0])

@@ -374,11 +374,10 @@ def process_dump(
     # an upward mover that tilts every angle fit high (user setup: net
     # ~3 m past the tee)
     max_r = (net_range_m - 0.25) if net_range_m else None
-    klass = club_class(club)
-    min_ms = CLUB_MIN_BALL_MS[klass]
-    track = tracking.find_ball(
-        mti, geo, max_range_m=max_r, min_ball_ms=min_ms, leading_fast_wins=True
-    )
+    # The ball is told from the clubhead by how it moves (tracking.pick_ball),
+    # not by a per-club speed floor: a punch or a soft swing with any club
+    # selected is a real shot (user, 2026-11-15).
+    track = tracking.find_ball_any_club(mti, geo, max_range_m=max_r)
 
     notch_used = False
     if track_broken(track) or (track is not None and near_mti_notch(track.speed_ms)):
@@ -386,9 +385,7 @@ def process_dump(
         # range walk; the window-scope filter keeps them (statics still
         # cancel over the full window)
         mti_w = prepared.mti("window")
-        track_w = tracking.find_ball(
-            mti_w, geo, max_range_m=max_r, min_ball_ms=min_ms, leading_fast_wins=True
-        )
+        track_w = tracking.find_ball_any_club(mti_w, geo, max_range_m=max_r)
         if not track_broken(track_w) and (
             track_broken(track)
             or track_w.rms_bins < track.rms_bins

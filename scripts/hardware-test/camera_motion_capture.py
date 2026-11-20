@@ -133,6 +133,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
     )
     radar.add_argument(
+        "--horizontal-coherence-min",
+        type=float,
+        default=0.90,
+        help=(
+            "Phase coherence a sideways reading needs (0-1). 0.80 roughly triples "
+            "sideways coverage on the 2026-11-19 garage swings while keeping the "
+            "readings within the golfer's start-line spread."
+        ),
+    )
+    radar.add_argument(
         "--iwr6843-cal",
         type=Path,
         default=REPO_ROOT / "config" / "iwr6843_calibration_reference.json",
@@ -373,9 +383,17 @@ class NoTriggerInput:
 
 
 MAX_POSTED_HORIZONTAL_DEG = 45.0  # the kiosk refuses a shot whose horizontal exceeds this
+# No real start line is this far off; beyond it the reading is the radar's
+# error (2026-11-19: -60 to -70 deg at high coherence on tracked balls),
+# so the shot goes up without sideways rather than flying sideways.
+MAX_SIDEWAYS_DEG = 15.0
 # The swing's clip is measured a moment after it saves; the radar dump takes
 # seconds, so the camera's verdict is normally in first. Wait this long for it.
 CAMERA_CONFIRM_WAIT_S = 1.5
+# A radar track cut short is kept, when the camera saw the ball leave, down to
+# this span (the radar's own floor is 15 ms; the 20% 5-iron swings of
+# 2026-11-15 gave clean 39-point tracks of 13-14 ms).
+SHORT_TRACK_MIN_SPAN_S = 0.008
 
 
 def credible_ball(measurement) -> bool:
@@ -400,16 +418,18 @@ def radar_line(measurement, *, launch=None, tee_known: bool, horizontal_zeroed: 
         return "no ball in the radar data"
     track = measurement.track
     parts = [f"ball {ball_speed(measurement):.1f} mph"]
-    if launch is not None and launch.accepted:
-        if launch.horizontal_deg is None:
-            side = ""
-        elif horizontal_zeroed:
-            side = f", {launch.horizontal_deg:+.1f} deg sideways"
-        else:
+    side = ""
+    if launch is not None and getattr(launch, "horizontal_deg", None) is not None:
+        if not horizontal_zeroed:
             side = ", sideways read but the straight line is not set"
+        elif abs(launch.horizontal_deg) > MAX_SIDEWAYS_DEG:
+            side = f", sideways {launch.horizontal_deg:+.1f} deg dropped as implausible"
+        else:
+            side = f", {launch.horizontal_deg:+.1f} deg sideways"
+    if launch is not None and launch.accepted:
         parts.append(f"launch {launch.angle_deg:.1f} deg up{side}")
     elif launch is not None:
-        parts.append(f"launch withheld ({launch.status})")
+        parts.append(f"launch withheld ({launch.status}){side}")
     elif not tee_known:
         parts.append("launch needs a ball distance")
     parts.append(f"({track.n_inliers} points, quality {measurement.quality})")
@@ -430,19 +450,22 @@ def shot_payload(measurement, *, launch=None, horizontal_zeroed: bool = True) ->
     if not credible_ball(measurement):
         return None
     payload = {"ball_speed_mph": round(ball_speed(measurement), 1)}
-    if launch is None or not launch.accepted:
+    if launch is None:
         return payload
     phase = getattr(launch, "horizontal_phase_rad", None)
     if phase is not None:
         payload["horizontal_phase_rad"] = round(phase, 5)
-    payload["launch_angle_vertical"] = round(launch.angle_deg, 2)
-    payload["vertical_single_channel"] = bool(launch.single_channel)
-    if launch.component_std_deg is not None:
-        payload["vertical_component_std_deg"] = round(launch.component_std_deg, 3)
+    if launch.accepted:
+        payload["launch_angle_vertical"] = round(launch.angle_deg, 2)
+        payload["vertical_single_channel"] = bool(launch.single_channel)
+        if launch.component_std_deg is not None:
+            payload["vertical_component_std_deg"] = round(launch.component_std_deg, 3)
+    # Sideways rests on the ball track alone, so it goes up even when the
+    # vertical was withheld; the kiosk then estimates the vertical.
     if (
         horizontal_zeroed
-        and launch.horizontal_deg is not None
-        and abs(launch.horizontal_deg) <= MAX_POSTED_HORIZONTAL_DEG
+        and getattr(launch, "horizontal_deg", None) is not None
+        and abs(launch.horizontal_deg) <= min(MAX_SIDEWAYS_DEG, MAX_POSTED_HORIZONTAL_DEG)
     ):
         payload["launch_angle_horizontal"] = round(launch.horizontal_deg, 2)
         if launch.horizontal_confidence is not None:
@@ -739,16 +762,48 @@ class RadarWorker(threading.Thread):
         and 104 mph while the camera was being handled. The clip settles it.
         With no clip (camera off, or later than the wait), nothing is held.
         """
+        return self.camera_verdict(capture, sleep=sleep, clock=clock) is False
+
+    def camera_verdict(self, capture, *, sleep=time.sleep, clock=time.monotonic) -> bool | None:
+        """Whether this swing's clip saw the ball leave; None with no clip or no check."""
         if self.ball_sizes is None or getattr(self.args, "no_camera_confirm", False):
-            return False
+            return None
         deadline = clock() + CAMERA_CONFIRM_WAIT_S
         while True:
             left = self.ball_sizes.left_near(capture.trigger_timestamp)
-            if left is not None:
-                return not left
-            if clock() >= deadline:
-                return False
+            if left is not None or clock() >= deadline:
+                return left
             sleep(0.05)
+
+    def keep_short_track(self, capture, measurement) -> bool:
+        """Keep a clean radar track that was cut short, when the camera saw the ball leave.
+
+        A soft swing (a punch, or the 20% 5-iron swings of 2026-11-15 at 61 and
+        77 mph) reaches the radar's ball gates later than a full one, so the
+        dump holds only 13-14 ms of its flight and the radar's 15 ms floor
+        rejects it, though its 39 points sat on a clean line. Such shots are
+        real and must reach the screen. With the camera's word that the ball
+        left, a short track is kept as low quality; a ragged or thin one is
+        still refused, and nothing changes without a clip that saw the ball go.
+        """
+        from openflight.iwr6843.shot import (  # pylint: disable=import-outside-toplevel
+            REJECT_MIN_INLIERS,
+            REJECT_RMS_BINS,
+        )
+
+        track = measurement.track
+        if measurement.quality != "reject" or not measurement.ball_found or track is None:
+            return False
+        if track.low_confidence or track.rms_bins >= REJECT_RMS_BINS:
+            return False
+        if track.n_inliers < REJECT_MIN_INLIERS:
+            return False
+        if track.t_last - track.t_first < SHORT_TRACK_MIN_SPAN_S:
+            return False
+        if self.camera_verdict(capture) is not True:
+            return False
+        measurement.quality = "low"
+        return True
 
     def current_club(self) -> str | None:
         """The kiosk's selected club when it can be read, else --club."""
@@ -810,6 +865,7 @@ class RadarWorker(threading.Thread):
                 tx_order=self.tx_order,
                 horizontal_method=self.args.horizontal_method,
                 horizontal_phase_reference_rad=horizontal_zero_rad,
+                horizontal_coherence_min=getattr(self.args, "horizontal_coherence_min", 0.90),
             )
         except Exception as error:  # pylint: disable=broad-exception-caught
             print(f"RADAR #{capture.sequence}: launch analysis failed: {error}")
@@ -860,6 +916,9 @@ class RadarWorker(threading.Thread):
                 print(f"RADAR #{capture.sequence}: analysis failed: {error}")
                 record["error"] = f"analysis: {error}"
             else:
+                if self.keep_short_track(capture, measurement):
+                    print(f"RADAR #{capture.sequence}: short track kept, the camera saw the ball leave")
+                    record["camera"] = "short track kept"
                 horizontal_zero = (
                     None if geometry is None else geometry.get("horizontal_phase_reference_rad")
                 )

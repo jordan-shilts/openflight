@@ -36,6 +36,7 @@ EDGE_MARGIN_X = 0.08  # fractions of the frame where a resting ball can't useful
 EDGE_MARGIN_TOP = 0.15
 EDGE_MARGIN_BOTTOM = 0.03
 MAX_DEPARTURE_FRAMES = 6  # a struck ball is gone in a frame or two; a shadow drifts
+SPLIT_MIN_RATIO = 6.0  # a split-off piece must stand this far above the rest of its blob
 
 
 @dataclass(frozen=True)
@@ -109,7 +110,23 @@ def _left_suddenly(frames: np.ndarray, box: tuple[slice, slice], after_start: in
     return len(gone) > 0 and int(gone[0]) <= MAX_DEPARTURE_FRAMES
 
 
-def _candidates(signal: np.ndarray) -> list[tuple[float, tuple[slice, slice]]]:
+def _ball_like(region: np.ndarray, box: tuple[slice, slice]) -> bool:
+    """Size and shape tests for one blob; ``region`` marks its pixels inside ``box``."""
+    rows, columns = box
+    height = rows.stop - rows.start
+    width = columns.stop - columns.start
+    area = int(np.count_nonzero(region))
+    if not MIN_AREA_PX <= area <= MAX_AREA_PX:
+        return False
+    if not (MIN_SIDE_PX <= width <= MAX_SIDE_PX and MIN_SIDE_PX <= height <= MAX_SIDE_PX):
+        return False
+    # A ball half hidden in grass is wider than tall, never the reverse.
+    if width / height > MAX_ASPECT or height / width > 1.25:
+        return False
+    return area / (width * height) >= MIN_FILL
+
+
+def _departure_mask(signal: np.ndarray) -> np.ndarray:
     noise = 1.4826 * float(np.median(np.abs(signal - np.median(signal))))
     mask = signal >= max(MIN_CONTRAST, NOISE_K * noise)
     height_px, width_px = signal.shape
@@ -117,25 +134,58 @@ def _candidates(signal: np.ndarray) -> list[tuple[float, tuple[slice, slice]]]:
     mask[height_px - int(height_px * EDGE_MARGIN_BOTTOM) :] = False
     mask[:, : int(width_px * EDGE_MARGIN_X)] = False
     mask[:, width_px - int(width_px * EDGE_MARGIN_X) :] = False
-    labels, _count = ndimage.label(mask)
+    return mask
+
+
+def _candidates(signal: np.ndarray) -> list[tuple[float, tuple[slice, slice]]]:
+    labels, _count = ndimage.label(_departure_mask(signal))
     found = []
     for index, box in enumerate(ndimage.find_objects(labels), start=1):
         if box is None:
             continue
-        rows, columns = box
-        height = rows.stop - rows.start
-        width = columns.stop - columns.start
-        area = int(np.count_nonzero(labels[box] == index))
-        if not MIN_AREA_PX <= area <= MAX_AREA_PX:
+        region = labels[box] == index
+        if _ball_like(region, box):
+            found.append((float(np.mean(signal[box][region])), box))
+    return found
+
+
+def _split_candidates(signal: np.ndarray) -> list[tuple[float, tuple[slice, slice]]]:
+    """Balls that merged with a much fainter change beside them.
+
+    In the garage (2026-11-15) the impact screen billowed 13 frames after the
+    strike and darkened the mat edge next to the ball; ball and mat edge made
+    one blob that failed the shape tests. Each failing blob is split at half its
+    own height, and a piece counts only when it stands far above the rest of the
+    blob (the garage ball 9.8 times; no piece of a clip without a strike passed
+    5.3 in 1,000 clips from 2026-11-12 to 11-15).
+    """
+    labels, _count = ndimage.label(_departure_mask(signal))
+    found = []
+    for index, box in enumerate(ndimage.find_objects(labels), start=1):
+        if box is None:
             continue
-        if not (MIN_SIDE_PX <= width <= MAX_SIDE_PX and MIN_SIDE_PX <= height <= MAX_SIDE_PX):
+        region = labels[box] == index
+        if _ball_like(region, box):
             continue
-        # A ball half hidden in grass is wider than tall, never the reverse.
-        if width / height > MAX_ASPECT or height / width > 1.25:
-            continue
-        if area / (width * height) < MIN_FILL:
-            continue
-        found.append((float(np.mean(signal[box][labels[box] == index])), box))
+        values = np.where(region, signal[box], 0.0)
+        pieces, _pieces = ndimage.label(values >= 0.5 * float(values.max()))
+        for piece_index, piece_box in enumerate(ndimage.find_objects(pieces), start=1):
+            if piece_box is None:
+                continue
+            piece = np.zeros_like(region)
+            piece[piece_box] = pieces[piece_box] == piece_index
+            rest = region & ~piece
+            if not rest.any():
+                continue
+            whole_box = (
+                slice(box[0].start + piece_box[0].start, box[0].start + piece_box[0].stop),
+                slice(box[1].start + piece_box[1].start, box[1].start + piece_box[1].stop),
+            )
+            if not _ball_like(piece[piece_box], whole_box):
+                continue
+            piece_mean = float(np.mean(signal[box][piece]))
+            if piece_mean >= SPLIT_MIN_RATIO * float(np.mean(signal[box][rest])):
+                found.append((piece_mean, whole_box))
     return found
 
 
@@ -156,8 +206,14 @@ def measure_ball_before_impact(
     after = np.median(frames[after_start : after_start + AFTER_FRAMES], axis=0).astype(np.float32)
     signal = ndimage.gaussian_filter(before - after, sigma=0.6)
 
-    departures = sorted(_candidates(signal), key=lambda item: item[0], reverse=True)
-    best = next((item for item in departures if _left_suddenly(frames, item[1], after_start)), None)
+    best = None
+    for finder in (_candidates, _split_candidates):  # split blobs only when nothing else left
+        departures = sorted(finder(signal), key=lambda item: item[0], reverse=True)
+        best = next(
+            (item for item in departures if _left_suddenly(frames, item[1], after_start)), None
+        )
+        if best is not None:
+            break
     if best is None:
         return None
     contrast, (rows, columns) = best
