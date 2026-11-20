@@ -124,8 +124,22 @@ def test_an_accepted_launch_is_sent_with_its_evidence():
     }
 
 
-def test_a_withheld_launch_sends_speed_only():
+def test_a_withheld_vertical_still_sends_the_sideways_reading():
+    """Since 2026-11-19 sideways rests on the ball track alone: a withheld
+    vertical (the kiosk's estimate fills it in) keeps its horizontal."""
     payload = recorder.shot_payload(measurement(), launch=lcmf(status="rejected_track", angle=None))
+
+    assert payload == {
+        "ball_speed_mph": 101.4,
+        "launch_angle_horizontal": -2.3,
+        "horizontal_coherence": 0.8,
+    }
+
+
+def test_a_withheld_launch_without_sideways_sends_speed_only():
+    payload = recorder.shot_payload(
+        measurement(), launch=lcmf(status="rejected_track", angle=None, horizontal=None)
+    )
 
     assert payload == {"ball_speed_mph": 101.4}
 
@@ -297,6 +311,7 @@ def test_launch_is_measured_with_the_radial_track_speed(monkeypatch):
                 "tx_order": "normal",
                 "horizontal_method": "colocated",
                 "horizontal_phase_reference_rad": None,
+                "horizontal_coherence_min": 0.90,
             },
         )
     ]
@@ -842,12 +857,18 @@ def test_a_zeroed_horizontal_is_sent_with_its_phase():
     assert payload["horizontal_phase_rad"] == pytest.approx(-0.79)
 
 
-def test_no_phase_is_sent_without_a_launch():
+def test_the_phase_goes_along_even_when_the_vertical_is_withheld():
+    """The kiosk's Set straight averages raw phases, so every swing's goes up."""
     payload = recorder.shot_payload(
         measurement(), launch=lcmf(status="rejected_track", angle=None, phase=-0.8)
     )
 
-    assert payload == {"ball_speed_mph": 101.4}
+    assert payload["horizontal_phase_rad"] == pytest.approx(-0.8)
+    assert "launch_angle_vertical" not in payload
+
+
+def test_no_phase_is_sent_without_a_launch():
+    assert recorder.shot_payload(measurement(), launch=None) == {"ball_speed_mph": 101.4}
 
 
 def test_the_log_line_does_not_print_an_unzeroed_angle():

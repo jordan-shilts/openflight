@@ -40,18 +40,26 @@ import urllib.error
 import urllib.request
 from collections import deque
 from pathlib import Path
-from typing import Callable
+from typing import Callable, NamedTuple
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 import numpy as np  # noqa: E402
 
+from openflight.camera.aim import AimReading, CameraAim  # noqa: E402
 from openflight.camera.ball_leaves_trigger import BallLeavesTrigger  # noqa: E402
 from openflight.camera.ball_size import measure_ball_in_clip  # noqa: E402
 from openflight.camera.capture_runtime import (  # noqa: E402
     CameraCaptureRuntime,
     CameraCaptureSettings,
+)
+from openflight.camera.flight_fit import (  # noqa: E402
+    QUIET_FRAMES,
+    CameraGeometry,
+    CameraLaunch,
+    load_clip,
+    measure_launch,
 )
 from openflight.camera.motion_trigger import (  # noqa: E402
     MotionTrigger,
@@ -192,7 +200,36 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "e.g. http://127.0.0.1:8080/api/shots/measuring"
         ),
     )
+    camera = parser.add_argument_group(
+        "Camera launch",
+        "With the radar, each swing's clip is also fitted for launch angles; they "
+        "replace the radar's when the fit follows the ball. Sideways is relative to "
+        "the straight line set with scripts/hardware-test/camera_aim.py.",
+    )
+    camera.add_argument(
+        "--no-camera-launch",
+        action="store_true",
+        help="Send the radar's launch angles only (the camera still confirms the ball left)",
+    )
+    camera.add_argument(
+        "--camera-height-above-ball-m",
+        type=float,
+        default=0.08,
+        help="Lens height above the resting ball's centre (VLA errs ~0.4 deg per cm)",
+    )
+    camera.add_argument("--camera-focal-px", type=float, default=535.0)
+    camera.add_argument(
+        "--camera-roll-deg", type=float, default=0.0, help="Image rotation, + clockwise"
+    )
+    camera.add_argument(
+        "--camera-aim",
+        type=Path,
+        default=Path.home() / ".config" / "openflight" / "camera-aim.json",
+        help="Where the camera's straight line is kept",
+    )
     args = parser.parse_args(argv)
+    if args.camera_focal_px <= 0:
+        parser.error("--camera-focal-px must be positive")
     for name in ("tee_m", "net_m", "radar_height_m"):
         value = getattr(args, name)
         if value is not None and value <= 0:
@@ -296,6 +333,7 @@ class TriggerWorker(threading.Thread):
         self.triggers = 0
         self.stop_event = threading.Event()
         self._saved_aim = False
+        self._aim_frames: list[np.ndarray] | None = []
 
     def listen(self, frame) -> None:
         """Camera-thread hook: hand the frame over without blocking."""
@@ -317,6 +355,7 @@ class TriggerWorker(threading.Thread):
             if not self._saved_aim:
                 save_with_zone(self.outdir / "aim.jpg", image, self.roi, "hitting zone")
                 self._saved_aim = True
+            self.keep_aim_frame(image)
             sample = self.trigger.feed(image)
             seen += 1
             if sample is None:
@@ -328,6 +367,16 @@ class TriggerWorker(threading.Thread):
             if self.calibrate and now - window_start >= 1.0 and last is not None:
                 print(self.stats_line(seen / (now - window_start), peak, last))
                 window_start, seen, peak = now, 0, 0.0
+
+    def keep_aim_frame(self, image: np.ndarray) -> None:
+        """Average the first frames into aim_mean.npy: the raw scene at start,
+        for setting the camera's straight line (camera_aim.py)."""
+        if self._aim_frames is None:
+            return
+        self._aim_frames.append(np.asarray(image, dtype=np.float32))
+        if len(self._aim_frames) >= QUIET_FRAMES:
+            np.save(self.outdir / "aim_mean.npy", np.mean(self._aim_frames, axis=0))
+            self._aim_frames = None
 
     def handle_sample(self, sample) -> None:
         """Act on a motion sample: with camera triggering, a trigger starts a reading."""
@@ -473,35 +522,248 @@ def shot_payload(measurement, *, launch=None, horizontal_zeroed: bool = True) ->
     return payload
 
 
+# The camera's own plausibility limit for a start line: a shank can start 20+
+# deg off, and the fit searches +-25 deg. The radar keeps MAX_SIDEWAYS_DEG.
+MAX_CAMERA_SIDEWAYS_DEG = 25.0
+
+
+def _rounded(value: float | None, digits: int = 2) -> float | None:
+    return None if value is None else round(value, digits)
+
+
+def camera_diagnostics(camera: CameraLaunch, aim: AimReading, hla_target: float | None) -> dict:
+    """The camera's reading of one swing, for the kiosk and the session log."""
+    return {
+        "accepted": camera.accepted,
+        "status": camera.status[:40],
+        "vla_deg": _rounded(camera.vla_deg),
+        "hla_deg": _rounded(hla_target),
+        "hla_axis_deg": _rounded(camera.hla_axis_deg),
+        "aim_yaw_deg": _rounded(aim.target_yaw_deg),
+        "bump_yaw_deg": _rounded(aim.bump_deg),
+        "aim_status": aim.status,
+        "hits": camera.hits,
+        "frames": camera.moving_frames,
+        "t0_ms": _rounded(camera.impact_ms),
+        "fit_score": _rounded(camera.score, 1),
+    }
+
+
+def merge_camera_launch(
+    payload: dict,
+    *,
+    launch,
+    camera: CameraLaunch,
+    aim: AimReading,
+    radar_offset_deg: float | None,
+) -> dict:
+    """The kiosk payload with the camera's launch where it is trustworthy.
+
+    Vertical: an accepted camera fit replaces the radar's (garage 2026-11-19:
+    the radar's had no shot-to-shot relation to the ball's flight; the
+    camera's follows the ball itself). Sideways, by the straight line's state:
+
+    * set (or scene briefly hidden): the camera's direction relative to the
+      target line; when the camera missed, the radar's, carried into the
+      same frame by its learned offset from the camera; else none;
+    * moved: none at all; the radar turned with the monitor too;
+    * unset: as before the camera aim existed (the radar's own zero).
+
+    The radar's replaced readings go along in ``radar_launch``.
+    """
+    out = dict(payload)
+    radar_hla = getattr(launch, "horizontal_deg", None) if launch is not None else None
+    radar: dict = {}
+    hla_target = None
+    if camera.accepted and camera.vla_deg is not None:
+        if "launch_angle_vertical" in out:
+            radar["vla_deg"] = out["launch_angle_vertical"]
+            radar["single_channel"] = out.pop("vertical_single_channel", False)
+            if "vertical_component_std_deg" in out:
+                radar["component_std_deg"] = out.pop("vertical_component_std_deg")
+        out["launch_angle_vertical"] = round(camera.vla_deg, 2)
+        out["launch_angle_vertical_source"] = "camera"
+
+    def drop_horizontal() -> None:
+        if "launch_angle_horizontal" in out:
+            radar["hla_deg"] = out.pop("launch_angle_horizontal")
+        if "horizontal_coherence" in out:
+            radar["horizontal_coherence"] = out.pop("horizontal_coherence")
+
+    if aim.status == "moved":
+        drop_horizontal()
+    elif aim.usable:
+        if camera.accepted and camera.hla_axis_deg is not None:
+            hla_target = camera.hla_axis_deg - aim.target_yaw_deg
+            drop_horizontal()
+            if abs(hla_target) <= MAX_CAMERA_SIDEWAYS_DEG:
+                out["launch_angle_horizontal"] = round(hla_target, 2)
+                out["launch_angle_horizontal_source"] = "camera"
+        elif radar_hla is not None and radar_offset_deg is not None:
+            pointed = radar_hla - radar_offset_deg - aim.target_yaw_deg
+            coherence = out.get("horizontal_coherence")
+            drop_horizontal()
+            if abs(pointed) <= MAX_SIDEWAYS_DEG:
+                out["launch_angle_horizontal"] = round(pointed, 2)
+                out["launch_angle_horizontal_source"] = "radar"
+                if coherence is not None:
+                    out["horizontal_coherence"] = coherence
+        else:
+            # No camera direction and no way to carry the radar's into the
+            # target frame yet: a radar reading on its own zero would disagree
+            # with the camera's line, so none goes.
+            drop_horizontal()
+    if (
+        radar_hla is not None
+        and "hla_deg" not in radar
+        and out.get("launch_angle_horizontal_source") == "camera"
+    ):
+        radar["hla_deg"] = round(radar_hla, 2)
+    if radar:
+        out["radar_launch"] = radar
+    out["camera_launch"] = camera_diagnostics(camera, aim, hla_target)
+    return out
+
+
+class CameraLaunchReader:
+    """Fits each swing's clip and points it at the target line (radar worker side)."""
+
+    def __init__(
+        self, args: argparse.Namespace, ball_sizes: "BallSizes", *, aim: CameraAim | None = None
+    ):
+        self.args = args
+        self.ball_sizes = ball_sizes
+        self.aim = (
+            aim
+            if aim is not None
+            else CameraAim.load(args.camera_aim, focal_px=args.camera_focal_px)
+        )
+
+    def geometry(self, rig: dict | None) -> CameraGeometry:
+        """This swing's camera geometry; the ball distance follows the kiosk's setup."""
+        distance = (rig or {}).get("tee_range_m") or self.args.tee_m or 1.549
+        return CameraGeometry(
+            focal_px=self.args.camera_focal_px,
+            height_above_ball_m=self.args.camera_height_above_ball_m,
+            ball_distance_m=float(distance),
+            roll_deg=self.args.camera_roll_deg,
+        )
+
+    def apply(
+        self, capture, measurement, launch, payload: dict, rig: dict | None, record: dict
+    ) -> dict:
+        """The payload with the camera's launch merged in; unchanged on any failure,
+        so a camera problem never costs a shot."""
+        clip = self.ball_sizes.clip_near(capture.trigger_timestamp)
+        if clip is None or clip.clip_path is None:
+            record["camera_launch"] = "no clip"
+            return payload
+        try:
+            frames, stamps, trigger_index = load_clip(clip.clip_path)
+            quiet_mean = frames[:QUIET_FRAMES].astype(np.float32).mean(axis=0)
+            aim = self.aim.read(quiet_mean)
+            camera = measure_launch(
+                frames,
+                stamps,
+                trigger_index,
+                ball_speed(measurement) * 0.44704,
+                self.geometry(rig),
+                ball_hint=clip.ball_xy,
+            )
+            zero = None if rig is None else rig.get("horizontal_phase_reference_rad")
+            radar_hla = getattr(launch, "horizontal_deg", None) if launch is not None else None
+            if camera.accepted and radar_hla is not None and camera.hla_axis_deg is not None:
+                self.aim.learn_radar(radar_hla, camera.hla_axis_deg, zero)
+                self.aim.save()
+            merged = merge_camera_launch(
+                payload,
+                launch=launch,
+                camera=camera,
+                aim=aim,
+                radar_offset_deg=self.aim.radar_offset_deg(zero),
+            )
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            print(f"CAMERA #{capture.sequence}: launch fit failed: {error}")
+            record["camera_launch"] = f"failed: {error}"
+            return payload
+        record["camera_launch"] = merged["camera_launch"]
+        print(f"CAMERA #{capture.sequence}: {camera_line(merged)}")
+        return merged
+
+
+def camera_line(payload: dict) -> str:
+    """One line per swing on what the camera added."""
+    camera = payload["camera_launch"]
+    if not camera["accepted"]:
+        return f"launch not read ({camera['status']}), radar angles kept"
+    parts = [f"launch {camera['vla_deg']:.1f} deg up"]
+    if payload.get("launch_angle_horizontal_source") == "camera":
+        parts.append(f"{payload['launch_angle_horizontal']:+.1f} deg from the target line")
+    elif camera["aim_status"] == "unset":
+        parts.append("sideways needs the straight line set (camera_aim.py)")
+    elif camera["aim_status"] == "moved":
+        parts.append("monitor moved: set the straight line again")
+    parts.append(f"{camera['hits']} frames, aim {camera['aim_status']}")
+    return ", ".join(parts)
+
+
+class ClipBall(NamedTuple):
+    """What the camera loop learned from one clip, for the radar worker.
+
+    (A NamedTuple, not a dataclass: the tests load this script without
+    registering it as a module, which dataclasses need.)"""
+
+    trigger_timestamp: float
+    diameter_px: float | None
+    clip_path: Path | None = None
+    ball_xy: tuple[float, float] | None = None
+
+
 class BallSizes:
-    """Ball widths by trigger time, from the camera loop to the radar worker."""
+    """Per-clip ball results by trigger time, from the camera loop to the radar worker."""
 
     def __init__(self, keep: int = 16):
-        self._items: deque[tuple[float, float | None]] = deque(maxlen=keep)
+        self._items: deque[ClipBall] = deque(maxlen=keep)
         self._lock = threading.Lock()
 
-    def add(self, trigger_timestamp: float, diameter_px: float | None) -> None:
+    def add(
+        self,
+        trigger_timestamp: float,
+        diameter_px: float | None,
+        clip_path: Path | str | None = None,
+        ball_xy: tuple[float, float] | None = None,
+    ) -> None:
         """Remember one clip's result, including that it found no ball."""
+        item = ClipBall(
+            trigger_timestamp,
+            diameter_px,
+            None if clip_path is None else Path(clip_path),
+            ball_xy,
+        )
         with self._lock:
-            self._items.append((trigger_timestamp, diameter_px))
+            self._items.append(item)
+
+    def clip_near(self, timestamp: float, tolerance_s: float = 1.0) -> ClipBall | None:
+        """The clip triggered closest to ``timestamp``, within the tolerance."""
+        with self._lock:
+            items = [
+                item
+                for item in self._items
+                if abs(item.trigger_timestamp - timestamp) <= tolerance_s
+            ]
+        if not items:
+            return None
+        return min(items, key=lambda item: abs(item.trigger_timestamp - timestamp))
 
     def near(self, timestamp: float, tolerance_s: float = 1.0) -> float | None:
         """The width from the clip triggered closest to ``timestamp``, if any."""
-        with self._lock:
-            items = list(self._items)
-        if not items:
-            return None
-        when, diameter = min(items, key=lambda item: abs(item[0] - timestamp))
-        return diameter if abs(when - timestamp) <= tolerance_s else None
+        clip = self.clip_near(timestamp, tolerance_s)
+        return None if clip is None else clip.diameter_px
 
     def left_near(self, timestamp: float, tolerance_s: float = 1.0) -> bool | None:
         """Whether the clip triggered with this swing saw a ball leave; None without a clip."""
-        with self._lock:
-            items = [item for item in self._items if abs(item[0] - timestamp) <= tolerance_s]
-        if not items:
-            return None
-        _when, diameter = min(items, key=lambda item: abs(item[0] - timestamp))
-        return diameter is not None
+        clip = self.clip_near(timestamp, tolerance_s)
+        return None if clip is None else clip.diameter_px is not None
 
 
 class CasePitch:
@@ -732,6 +994,7 @@ class RadarWorker(threading.Thread):
         ball_sizes: BallSizes | None = None,
         case_pitch: CasePitch | None = None,
         kiosk_status: KioskStatus | None = None,
+        camera_launch: CameraLaunchReader | None = None,
     ):
         super().__init__(name="radar-results", daemon=True)
         from openflight.iwr6843.monitor import (  # pylint: disable=import-outside-toplevel
@@ -744,6 +1007,7 @@ class RadarWorker(threading.Thread):
         self.ball_sizes = ball_sizes
         self.case_pitch = case_pitch
         self.kiosk_status = kiosk_status
+        self.camera_launch = camera_launch
         self.tx_order = tx_order_from_config(args.iwr6843_config)
         self.results_path = outdir / "radar.jsonl"
         self.stop_event = threading.Event()
@@ -917,7 +1181,9 @@ class RadarWorker(threading.Thread):
                 record["error"] = f"analysis: {error}"
             else:
                 if self.keep_short_track(capture, measurement):
-                    print(f"RADAR #{capture.sequence}: short track kept, the camera saw the ball leave")
+                    print(
+                        f"RADAR #{capture.sequence}: short track kept, the camera saw the ball leave"
+                    )
                     record["camera"] = "short track kept"
                 horizontal_zero = (
                     None if geometry is None else geometry.get("horizontal_phase_reference_rad")
@@ -945,6 +1211,11 @@ class RadarWorker(threading.Thread):
                     print(f"RADAR #{capture.sequence}: held back, the camera saw no ball leave")
                     record["camera"] = "no ball left"
                     payload = None
+                camera_launch = getattr(self, "camera_launch", None)
+                if payload is not None and camera_launch is not None:
+                    payload = camera_launch.apply(
+                        capture, measurement, launch, payload, geometry, record
+                    )
                 result = "no_ball" if payload is None else "shot"
                 if self.args.post_to and payload is not None:
                     status = post_shot(self.args.post_to, payload)
@@ -1083,6 +1354,18 @@ def main(argv: list[str] | None = None) -> int:
             trigger_observers=[sound_trigger(worker_holder, kiosk_status)] if sound else None,
         )
         ball_sizes = BallSizes()
+        camera_launch = None
+        if not args.no_camera_launch:
+            camera_launch = CameraLaunchReader(args, ball_sizes)
+            aim = camera_launch.aim
+            print(
+                "Camera launch on; straight line "
+                + (
+                    f"set ({aim.method}, target {aim.target_yaw_deg:+.2f} deg)"
+                    if aim.target_yaw_deg is not None
+                    else "not set: sideways stays on the radar's zero"
+                )
+            )
         radar_worker = RadarWorker(
             radar_monitor,
             calibration,
@@ -1091,6 +1374,7 @@ def main(argv: list[str] | None = None) -> int:
             ball_sizes=ball_sizes,
             case_pitch=CasePitch(args.pitch_axis) if args.pitch_axis else None,
             kiosk_status=kiosk_status,
+            camera_launch=camera_launch,
         )
         geometry = "no --tee-m: ball speed only" if args.tee_m is None else f"tee {args.tee_m} m"
         print(f"TI radar armed on {radar_monitor.port} ({geometry})")
@@ -1153,7 +1437,12 @@ def main(argv: list[str] | None = None) -> int:
             saved += 1
             if ball_sizes is not None:
                 ball = measure_ball_in_clip(capture.path)
-                ball_sizes.add(capture.trigger_timestamp, ball.diameter_px if ball else None)
+                ball_sizes.add(
+                    capture.trigger_timestamp,
+                    ball.diameter_px if ball else None,
+                    clip_path=capture.path,
+                    ball_xy=(ball.x, ball.y) if ball else None,
+                )
             peak = save_contact_sheet(Path(capture.path), args.roi)
             where = "" if peak is None else f", biggest change at frame {peak:+d} from the trigger"
             print(f"clip {saved}: {describe(capture)}{where} -> {capture.path}")
