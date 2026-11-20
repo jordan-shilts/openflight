@@ -45,6 +45,12 @@ MAX_STRAIGHT_SAMPLES = 5
 MIN_STRAIGHT_SAMPLES = 3
 STRAIGHT_LINE_ACTIONS = ("set", "clear")
 PHASE_LIMITS_RAD = (-math.pi, math.pi)
+# The swing recorder's camera aim, as its last swing reported it: "set" (aimed
+# at the target line), "unset" (never aimed), "moved" (the monitor turned
+# since; set straight again) or "scene_lost" (background hidden for that clip,
+# the last good correction used, so still aimed).
+CAMERA_AIM_STATUSES = ("set", "unset", "moved", "scene_lost")
+CAMERA_AIMED_STATUSES = ("set", "scene_lost")
 
 _UPDATE_KEYS = frozenset(
     {
@@ -161,6 +167,9 @@ class RigSetupStore:
         # Start lines of the latest shots, kept only until the zero is set.
         self._horizontal_phases: list[float] = []
         self._horizontal_zero_rad: float | None = None
+        # The recorder camera's aim from the latest swing that reported it. Not
+        # saved: the next swing reports it again.
+        self._camera_aim: str | None = None
         self._load()
 
     def _load(self) -> None:
@@ -314,6 +323,9 @@ class RigSetupStore:
                     "shots": len(self._horizontal_phases),
                     "shots_needed": max(0, MIN_STRAIGHT_SAMPLES - len(self._horizontal_phases)),
                 },
+                # "moved" means the monitor turned: set straight again. None
+                # until a swing reports the camera's aim.
+                "camera_aim": self._camera_aim,
             }
 
     def update(self, payload: object) -> dict:
@@ -364,6 +376,9 @@ class RigSetupStore:
             self._active = active
             self._setups[setup_id] = updated
             self._radar_height_m = radar_height
+            if "straight_line" in payload and self._camera_aim == "moved":
+                # Acted on; the next swing says whether the camera is aimed now.
+                self._camera_aim = None
             self._horizontal_zero_rad = horizontal_zero
             self._save()
         return self.snapshot()
@@ -396,6 +411,20 @@ class RigSetupStore:
                 -MAX_STRAIGHT_SAMPLES:
             ]
         return True
+
+    def observe_camera_aim(self, status: str) -> bool:
+        """Remember the camera aim a swing reported; True when it changed.
+
+        Raises ValueError for a status that is not one of CAMERA_AIM_STATUSES.
+        """
+        if status not in CAMERA_AIM_STATUSES:
+            raise ValueError(f"camera aim must be one of {', '.join(CAMERA_AIM_STATUSES)}")
+        with self._lock:
+            changed = status != self._camera_aim
+            self._camera_aim = status
+        if changed and status == "moved":
+            logger.warning("[RIG] The camera reports the monitor moved: set straight again")
+        return changed
 
     def observe(
         self,
