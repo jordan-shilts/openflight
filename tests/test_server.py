@@ -5074,7 +5074,8 @@ class TestMeasuredShots:
     @pytest.mark.parametrize(
         ("extra", "message"),
         [
-            ({"launch_angle_horizontal": 1.0}, "needs launch_angle_vertical"),
+            # A sideways-only radar post is valid since 2026-11-19 (the vertical
+            # was withheld and the estimate fills it in), so it is not here.
             (
                 {"launch_angle_vertical": 15, "launch_angle_horizontal": 46},
                 "launch_angle_horizontal must be between",
