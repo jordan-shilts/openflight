@@ -61,9 +61,9 @@ def test_signature_sizes_must_agree():
         scene_shift(np.zeros((10, 10)), np.zeros((10, 12)))
 
 
-def test_shift_to_yaw_sign_and_off_centre_scale():
-    yaw = aim_mod.shift_to_yaw_deg(27, 535.0, WIDTH)
-    assert 0 < yaw < math.degrees(math.atan(27 / 535.0))  # the region is off-centre
+def test_shift_to_yaw_sign_and_scale():
+    yaw = aim_mod.shift_to_yaw_deg(41, 535.0, WIDTH)
+    assert yaw == pytest.approx(4.39, abs=0.01)  # 2026-11-19: 41 px for the 4.3 deg turn
     assert aim_mod.shift_to_yaw_deg(-27, 535.0, WIDTH) < 0
     assert aim_mod.shift_to_yaw_deg(0, 535.0, WIDTH) == 0
 

@@ -131,14 +131,18 @@ def scene_shift(reference: np.ndarray, current: np.ndarray) -> SceneShift:
     return SceneShift(dx_px=float(dx), dy_px=float(dy), match=score)
 
 
-def shift_to_yaw_deg(dx_px: float, focal_px: float, width: int) -> float:
-    """The turn that slides the scene region's centre by ``dx_px``.
+def shift_to_yaw_deg(dx_px: float, focal_px: float, width: int) -> float:  # noqa: ARG001
+    """The turn that slides the scene by ``dx_px``: dx / focal, in degrees.
 
     + = the scene slid right = the camera turned left = the target now lies
     further right of the camera axis.
+
+    The lens maps angle to pixels evenly across the frame (f-theta like),
+    not as a pinhole would: on 2026-11-19 the 4.3 deg turn slid the scene
+    40-42 px at the centre and at the right edge alike, where a pinhole
+    would have slid the edge 20% further. ``width`` is kept for callers.
     """
-    centre = (0.5 * (SCENE_COLS[0] + SCENE_COLS[1]) - 0.5) * width
-    return math.degrees(math.atan((centre + dx_px) / focal_px) - math.atan(centre / focal_px))
+    return math.degrees(dx_px / focal_px)
 
 
 def _line(p1: tuple[float, float], p2: tuple[float, float]) -> np.ndarray:
