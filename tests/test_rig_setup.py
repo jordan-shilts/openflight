@@ -5,7 +5,13 @@ import math
 
 import pytest
 
-from openflight.rig_setup import COURSE, SIMULATOR, RigSetupError, RigSetupStore
+from openflight.rig_setup import (
+    CAMERA_AIM_STATUSES,
+    COURSE,
+    SIMULATOR,
+    RigSetupError,
+    RigSetupStore,
+)
 
 
 @pytest.fixture
@@ -424,3 +430,66 @@ def test_the_straight_line_is_the_same_in_both_setups(store):
     store.update({"active": COURSE})
 
     assert store.geometry().horizontal_phase_reference_rad == pytest.approx(-0.8)
+
+
+# -- the recorder camera's aim ---------------------------------------------
+
+
+def test_a_new_rig_reports_no_camera_aim(store):
+    assert store.snapshot()["camera_aim"] is None
+
+
+@pytest.mark.parametrize("status", CAMERA_AIM_STATUSES)
+def test_the_latest_camera_aim_is_shown(store, status):
+    assert store.observe_camera_aim(status) is True
+
+    assert store.snapshot()["camera_aim"] == status
+
+
+def test_only_a_change_of_aim_counts_as_news(store):
+    store.observe_camera_aim("set")
+
+    assert store.observe_camera_aim("set") is False
+    assert store.observe_camera_aim("moved") is True
+
+
+@pytest.mark.parametrize("status", ["aimed", "", None, 1])
+def test_an_unknown_camera_aim_is_refused(store, status):
+    with pytest.raises(ValueError, match="camera aim must be one of"):
+        store.observe_camera_aim(status)
+
+    assert store.snapshot()["camera_aim"] is None
+
+
+@pytest.mark.parametrize("action", ["set", "clear"])
+def test_setting_straight_again_answers_a_moved_monitor(store, action):
+    shots(store, [-0.8, -0.8, -0.8])
+    store.observe_camera_aim("moved")
+
+    snapshot = store.update({"straight_line": action})
+
+    assert snapshot["camera_aim"] is None
+
+
+def test_a_refused_set_straight_keeps_the_moved_warning(store):
+    store.observe_camera_aim("moved")
+
+    with pytest.raises(RigSetupError):
+        store.update({"straight_line": "set"})
+
+    assert store.snapshot()["camera_aim"] == "moved"
+
+
+def test_other_changes_keep_the_moved_warning(store):
+    store.observe_camera_aim("moved")
+
+    store.update({"ball_distance_m": 1.4})
+
+    assert store.snapshot()["camera_aim"] == "moved"
+
+
+def test_the_camera_aim_is_not_saved(store, tmp_path):
+    store.observe_camera_aim("moved")
+    store.update({"ball_distance_m": 1.4})
+
+    assert RigSetupStore(tmp_path / "rig.json").snapshot()["camera_aim"] is None
