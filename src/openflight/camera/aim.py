@@ -212,8 +212,14 @@ class AimReading:
 
 
 @dataclass
-class CameraAim:
-    """The saved straight line and what follows it; persisted as JSON + .npy."""
+class CameraAim:  # pylint: disable=too-many-instance-attributes
+    """The saved straight line and what follows it; persisted as JSON + .npy.
+
+    The target direction can be set before its reference scene exists
+    (``reference_pending``): clubs laid on the mat to set the line would sit in
+    the scene region, so the first clip after they are picked up becomes the
+    reference, at zero bump.
+    """
 
     path: Path
     focal_px: float = 535.0
@@ -221,12 +227,15 @@ class CameraAim:
     method: str | None = None
     set_at: float | None = None
     reference: np.ndarray | None = None
+    reference_pending: bool = False
     last_bump_deg: float = 0.0
+    radar_zero: float | None = None
     radar_pairs: list[float] = field(default_factory=list)
     lost_streak: int = 0
 
     @property
     def reference_path(self) -> Path:
+        """Where the reference scene signature is kept, next to the JSON."""
         return self.path.with_suffix(".scene.npy")
 
     @classmethod
@@ -234,22 +243,31 @@ class CameraAim:
         """The saved aim, or an unset one when there is none (or it is unreadable)."""
         aim = cls(path=Path(path), focal_px=focal_px)
         try:
-            data = json.loads(aim.path.read_text())
-            reference = np.load(aim.reference_path)
+            data = json.loads(aim.path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             return aim
-        yaw = data.get("target_yaw_deg")
-        if not isinstance(yaw, (int, float)) or not math.isfinite(yaw):
+        if not isinstance(data, dict):
             return aim
+        yaw = data.get("target_yaw_deg")
+        if isinstance(yaw, bool) or not isinstance(yaw, (int, float)) or not math.isfinite(yaw):
+            return aim
+        pending = data.get("reference_pending") is True
+        reference = None
+        if not pending:
+            try:
+                reference = np.load(aim.reference_path)
+            except (OSError, ValueError):
+                return aim
         aim.target_yaw_deg = float(yaw)
         aim.method = data.get("method")
         aim.set_at = data.get("set_at")
         aim.reference = reference
-        aim.last_bump_deg = float(data.get("last_bump_deg") or 0.0)
+        aim.reference_pending = pending
+        aim.last_bump_deg = _finite_or(data.get("last_bump_deg"), 0.0)
+        zero = data.get("radar_zero")
+        aim.radar_zero = None if zero is None else _finite_or(zero, None)
         pairs = data.get("radar_pairs") or []
-        aim.radar_pairs = [
-            float(p) for p in pairs if isinstance(p, (int, float)) and math.isfinite(p)
-        ]
+        aim.radar_pairs = [_finite_or(p, None) for p in pairs if _finite_or(p, None) is not None]
         return aim
 
     def save(self) -> None:
@@ -263,30 +281,43 @@ class CameraAim:
             "target_yaw_deg": self.target_yaw_deg,
             "method": self.method,
             "set_at": self.set_at,
+            "reference_pending": self.reference_pending,
             "last_bump_deg": self.last_bump_deg,
+            "radar_zero": self.radar_zero,
             "radar_pairs": self.radar_pairs[-RADAR_PAIRS_KEPT:],
             "focal_px": self.focal_px,
         }
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=1))
+        tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
         tmp.replace(self.path)
 
-    def set_straight(self, quiet_mean: np.ndarray, target_yaw_deg: float, method: str) -> None:
-        """Save this scene and target direction as the reference."""
-        if not math.isfinite(target_yaw_deg):
+    def set_straight(
+        self, quiet_mean: np.ndarray | None, target_yaw_deg: float, method: str
+    ) -> None:
+        """Save this target direction, with this scene as the reference, or with
+        the next clip's scene when ``quiet_mean`` is None."""
+        if isinstance(target_yaw_deg, bool) or not math.isfinite(target_yaw_deg):
             raise ValueError("target_yaw_deg must be a number")
         self.target_yaw_deg = float(target_yaw_deg)
         self.method = method
         self.set_at = time.time()
-        self.reference = scene_signature(quiet_mean)
+        self.reference = None if quiet_mean is None else scene_signature(quiet_mean)
+        self.reference_pending = quiet_mean is None
         self.last_bump_deg = 0.0
+        self.lost_streak = 0
         self.radar_pairs = []
         self.save()
 
     def read(self, quiet_mean: np.ndarray) -> AimReading:
         """The target direction for a clip whose quiet frames average to ``quiet_mean``."""
-        if self.target_yaw_deg is None or self.reference is None:
+        if self.target_yaw_deg is None:
             return AimReading(status="unset")
+        if self.reference_pending or self.reference is None:
+            self.reference = scene_signature(quiet_mean)
+            self.reference_pending = False
+            self.last_bump_deg = 0.0
+            self.save()
+            return AimReading(status="set", target_yaw_deg=self.target_yaw_deg, bump_deg=0.0)
         try:
             shift = scene_shift(self.reference, scene_signature(quiet_mean))
         except ValueError:
@@ -310,14 +341,29 @@ class CameraAim:
             status="set", target_yaw_deg=self.target_yaw_deg + bump, bump_deg=bump, shift=shift
         )
 
-    def learn_radar(self, radar_hla_deg: float, camera_hla_axis_deg: float) -> None:
-        """Remember one shot's radar-minus-camera sideways reading (monitor frame)."""
+    def learn_radar(
+        self, radar_hla_deg: float, camera_hla_axis_deg: float, radar_zero: float | None = None
+    ) -> None:
+        """Remember one shot's radar-minus-camera sideways reading (monitor frame).
+
+        ``radar_zero`` is the radar's straight-line phase the reading was made
+        with; a new zero starts the learning over.
+        """
+        if radar_zero != self.radar_zero:
+            self.radar_zero = radar_zero
+            self.radar_pairs = []
         diff = radar_hla_deg - camera_hla_axis_deg
         if math.isfinite(diff):
             self.radar_pairs = (self.radar_pairs + [float(diff)])[-RADAR_PAIRS_KEPT:]
 
-    def radar_offset_deg(self) -> float | None:
-        """Median radar-minus-camera offset once enough shots had both."""
-        if len(self.radar_pairs) < RADAR_PAIRS_NEEDED:
+    def radar_offset_deg(self, radar_zero: float | None = None) -> float | None:
+        """Median radar-minus-camera offset, once enough shots under this zero had both."""
+        if radar_zero != self.radar_zero or len(self.radar_pairs) < RADAR_PAIRS_NEEDED:
             return None
         return float(statistics.median(self.radar_pairs))
+
+
+def _finite_or(value, default):
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        return default
+    return float(value)

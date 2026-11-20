@@ -192,3 +192,28 @@ def test_radar_offset_is_learned_from_pairs(tmp_path):
         aim.learn_radar(1.0, 0.0)
     assert len(aim.radar_pairs) == aim_mod.RADAR_PAIRS_KEPT
     assert aim.radar_offset_deg() == 1.0
+
+
+def test_pending_reference_is_taken_from_the_next_clip(tmp_path):
+    scene = garage()
+    aim = CameraAim.load(tmp_path / "aim.json")
+    aim.set_straight(None, 2.0, "clubs")
+    reloaded = CameraAim.load(tmp_path / "aim.json")
+    assert reloaded.reference_pending and reloaded.target_yaw_deg == 2.0
+    first = reloaded.read(frame_from(scene, 0))
+    assert first.status == "set" and first.bump_deg == 0.0 and first.target_yaw_deg == 2.0
+    later = CameraAim.load(tmp_path / "aim.json").read(frame_from(scene, 25, seed=4))
+    assert later.bump_deg == pytest.approx(aim_mod.shift_to_yaw_deg(25, 535.0, WIDTH), abs=0.15)
+
+
+def test_a_new_radar_zero_starts_the_learning_over(tmp_path):
+    aim = CameraAim.load(tmp_path / "aim.json")
+    aim.set_straight(frame_from(garage(), 0), 0.0, "clubs")
+    for _ in range(aim_mod.RADAR_PAIRS_NEEDED):
+        aim.learn_radar(3.0, 1.0, radar_zero=-0.8)
+    assert aim.radar_offset_deg(-0.8) == 2.0
+    assert aim.radar_offset_deg(-0.5) is None
+    aim.learn_radar(5.0, 1.0, radar_zero=-0.5)
+    assert aim.radar_pairs == [4.0]
+    aim.save()
+    assert CameraAim.load(tmp_path / "aim.json").radar_zero == -0.5
