@@ -284,3 +284,72 @@ def test_ball_sizes_keep_the_clip_and_answer_by_time(tmp_path):
     assert sizes.near(20.3) == 14.0
     assert sizes.clip_near(40.0) is None
     assert sizes.left_near(40.0) is None
+
+
+def test_club_path_is_logged_only_never_posted(tmp_path, monkeypatch):
+    clip, speed_mps = _write_clip(tmp_path / "clip2")
+    sizes = recorder.BallSizes()
+    sizes.add(100.0, 15.0, clip_path=clip, ball_xy=(380.0, 232.0))
+    reader = recorder.CameraLaunchReader(reader_args(tmp_path), sizes)
+    calls = []
+
+    def fake_estimate(*args, **kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(
+            status="ok",
+            path_deg=2.0,
+            attack_angle_deg=-4.0,
+            confidence="low",
+            raw_confidence="high",
+            n_pre=3,
+            n_post=6,
+            rms_px=1.1,
+            elapsed_ms=52.0,
+        )
+
+    monkeypatch.setattr(recorder, "estimate_club_delivery", fake_estimate)
+    measurement = SimpleNamespace(
+        ball_speed_corrected_mph=speed_mps / 0.44704, ball_speed_mph=speed_mps / 0.44704
+    )
+    record: dict = {}
+    payload = reader.apply(
+        SimpleNamespace(trigger_timestamp=100.0, sequence=4),
+        measurement,
+        None,
+        dict(RADAR_PAYLOAD),
+        None,
+        record,
+    )
+    assert not any(key.startswith("club_") for key in payload)
+    assert calls == []  # nothing before the shot is posted
+    reader.log_club(SimpleNamespace(sequence=4), record)
+    assert record["camera_club"]["path_axis_deg"] == 2.0
+    assert record["camera_club"]["confidence"] == "low"
+    assert calls and calls[0]["ball_hla_deg"] == pytest.approx(4.0, abs=0.3)
+    reader.log_club(SimpleNamespace(sequence=4), record := {})
+    assert "camera_club" not in record  # once per swing
+
+
+def test_club_log_can_be_turned_off_and_failures_stay_in_the_record(tmp_path, monkeypatch):
+    clip, speed_mps = _write_clip(tmp_path / "clip3")
+    sizes = recorder.BallSizes()
+    sizes.add(100.0, 15.0, clip_path=clip, ball_xy=(380.0, 232.0))
+    measurement = SimpleNamespace(
+        ball_speed_corrected_mph=speed_mps / 0.44704, ball_speed_mph=speed_mps / 0.44704
+    )
+    capture = SimpleNamespace(trigger_timestamp=100.0, sequence=5)
+
+    off = recorder.CameraLaunchReader(reader_args(tmp_path, no_camera_club_log=True), sizes)
+    off.apply(capture, measurement, None, dict(RADAR_PAYLOAD), None, {})
+    record: dict = {}
+    off.log_club(capture, record)
+    assert "camera_club" not in record
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("bad clip")
+
+    monkeypatch.setattr(recorder, "estimate_club_delivery", boom)
+    on = recorder.CameraLaunchReader(reader_args(tmp_path), sizes)
+    on.apply(capture, measurement, None, dict(RADAR_PAYLOAD), None, {})
+    on.log_club(capture, record)
+    assert record["camera_club"] == "failed: bad clip"

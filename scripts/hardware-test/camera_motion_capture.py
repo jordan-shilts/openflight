@@ -56,6 +56,10 @@ from openflight.camera.capture_runtime import (  # noqa: E402
     CameraCaptureRuntime,
     CameraCaptureSettings,
 )
+from openflight.camera.club_track import (  # noqa: E402
+    ClubTrackGeometry,
+    estimate_club_delivery,
+)
 from openflight.camera.flight_fit import (  # noqa: E402
     QUIET_FRAMES,
     CameraGeometry,
@@ -212,6 +216,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--no-camera-launch",
         action="store_true",
         help="Send the radar's launch angles only (the camera still confirms the ball left)",
+    )
+    camera.add_argument(
+        "--no-camera-club-log",
+        action="store_true",
+        help=(
+            "Skip the experimental camera club path. It is only logged (radar.jsonl), "
+            "never sent to the kiosk, until it is validated"
+        ),
     )
     camera.add_argument(
         "--camera-height-above-ball-m",
@@ -668,6 +680,7 @@ class CameraLaunchReader:
             if aim is not None
             else CameraAim.load(args.camera_aim, focal_px=args.camera_focal_px)
         )
+        self._club_inputs: tuple | None = None
 
     def geometry(self, rig: dict | None) -> CameraGeometry:
         """This swing's camera geometry; the ball distance follows the kiosk's setup."""
@@ -692,14 +705,26 @@ class CameraLaunchReader:
             frames, stamps, trigger_index = load_clip(clip.clip_path)
             quiet_mean = frames[:QUIET_FRAMES].astype(np.float32).mean(axis=0)
             aim = self.aim.read(quiet_mean)
+            geometry = self.geometry(rig)
+            speed_mps = ball_speed(measurement) * 0.44704
             camera = measure_launch(
                 frames,
                 stamps,
                 trigger_index,
-                ball_speed(measurement) * 0.44704,
-                self.geometry(rig),
+                speed_mps,
+                geometry,
                 ball_hint=clip.ball_xy,
             )
+            if camera.accepted:
+                self._club_inputs = (
+                    frames,
+                    stamps,
+                    trigger_index,
+                    camera,
+                    clip,
+                    speed_mps,
+                    geometry,
+                )
             zero = None if rig is None else rig.get("horizontal_phase_reference_rad")
             radar_hla = getattr(launch, "horizontal_deg", None) if launch is not None else None
             if camera.accepted and radar_hla is not None and camera.hla_axis_deg is not None:
@@ -719,6 +744,59 @@ class CameraLaunchReader:
         record["camera_launch"] = merged["camera_launch"]
         print(f"CAMERA #{capture.sequence}: {camera_line(merged)}")
         return merged
+
+    def log_club(self, capture, record: dict) -> None:
+        """Experimental camera club path and attack angle, into the swing's record only.
+
+        Runs after the shot is posted, so it never delays it. Its confidence
+        is capped at "low": on 2026-11-19 fits from the frames before impact
+        and from those after disagreed by ~3 deg of path, so nothing of it
+        reaches the kiosk until it is validated against a reference.
+        """
+        inputs, self._club_inputs = self._club_inputs, None
+        if inputs is None or self.args.no_camera_club_log:
+            return
+        frames, stamps, trigger_index, camera, clip, speed_mps, geometry = inputs
+        try:
+            club = estimate_club_delivery(
+                frames,
+                stamps,
+                trigger_index,
+                (camera.ball_u, camera.ball_v),
+                clip.diameter_px,
+                None if camera.impact_ms is None else camera.impact_ms / 1000.0,
+                speed_mps,
+                geometry=_club_track_geometry(geometry),
+                ball_hla_deg=camera.hla_axis_deg,
+                ball_vla_deg=camera.vla_deg,
+            )
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            record["camera_club"] = f"failed: {error}"
+            return
+        record["camera_club"] = {
+            "status": club.status,
+            "path_axis_deg": _rounded(club.path_deg),
+            "attack_angle_deg": _rounded(club.attack_angle_deg),
+            "confidence": club.confidence,
+            "raw_confidence": club.raw_confidence,
+            "n_pre": club.n_pre,
+            "n_post": club.n_post,
+            "rms_px": _rounded(club.rms_px),
+            "elapsed_ms": _rounded(club.elapsed_ms, 0),
+        }
+        if club.path_deg is not None:
+            print(
+                f"CLUB #{capture.sequence}: path {club.path_deg:+.1f} deg (camera axis), attack "
+                f"{club.attack_angle_deg:+.1f} deg, {club.raw_confidence} -> logged only"
+            )
+
+
+def _club_track_geometry(geometry: CameraGeometry) -> ClubTrackGeometry:
+    return ClubTrackGeometry(
+        focal_px=geometry.focal_px,
+        camera_height_m=geometry.height_above_ball_m,
+        ball_distance_m=geometry.ball_distance_m,
+    )
 
 
 def camera_line(payload: dict) -> str:
@@ -1280,6 +1358,8 @@ class RadarWorker(threading.Thread):
                     status = post_shot(self.args.post_to, payload)
                     print(f"RADAR #{capture.sequence}: {status}")
                     record["kiosk"] = status
+                if camera_launch is not None:
+                    camera_launch.log_club(capture, record)
         with self.results_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, default=str) + "\n")
         return result
