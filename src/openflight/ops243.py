@@ -253,6 +253,11 @@ class OPS243Radar:
         # a swing is only worth making while this is True.
         self.rolling_buffer_armed = False
         self.last_hardware_trigger_first_byte_timestamp: Optional[float] = None
+        # Host epoch when the last S! was written, and when its dump's first
+        # byte arrived (trigger_capture). Their gap minus the post-trigger
+        # sampling time bounds how late the board took the software trigger.
+        self.last_software_trigger_timestamp: Optional[float] = None
+        self.last_software_trigger_first_byte_timestamp: Optional[float] = None
         # Most recent OPS-clock -> host-epoch sync (see read_clock_sync).
         self.last_clock_sync: Optional[dict] = None
 
@@ -274,7 +279,7 @@ class OPS243Radar:
                 ports.append(port.device)
         return ports
 
-    def connect(self, timeout: float = DEFAULT_TIMEOUT) -> bool:
+    def connect(self, timeout: float = DEFAULT_TIMEOUT, *, idle_first: bool = False) -> bool:
         """
         Connect to the radar sensor.
 
@@ -285,6 +290,11 @@ class OPS243Radar:
 
         Args:
             timeout: Serial read timeout in seconds
+            idle_first: Send ``PI`` (idle) before draining. A board in its
+                factory CW mode streams a speed line on any motion, so the
+                drain never sees silence and connect fails with "did not
+                quiesce" (Pi, 2026-11-19). Only for callers that configure
+                the mode themselves next; a dump in flight ignores it.
 
         Returns:
             True if connection successful
@@ -305,6 +315,10 @@ class OPS243Radar:
             if self._should_negotiate_baud():
                 self.negotiate_uart_baud(timeout=timeout)
             self._log_transport()
+            if idle_first:
+                self.serial.write(b"PI")
+                self.serial.flush()
+                time.sleep(0.1)
             # Drain any in-progress dump (e.g. radar triggered while no software was running).
             # Opening the port unblocks the radar's UART TX, so we read until silence.
             self._drain_serial()
@@ -1486,6 +1500,8 @@ class OPS243Radar:
 
         response_lines = []
         start_time = time.time()
+        self.last_software_trigger_timestamp = start_time
+        self.last_software_trigger_first_byte_timestamp = None
         last_data_time = start_time
         bytes_received = 0
 
@@ -1493,6 +1509,8 @@ class OPS243Radar:
         while (time.time() - start_time) < timeout:
             if self.serial.in_waiting:
                 chunk = self.serial.read(self.serial.in_waiting)
+                if bytes_received == 0:
+                    self.last_software_trigger_first_byte_timestamp = time.time()
                 response_lines.append(chunk.decode("ascii", errors="ignore"))
                 bytes_received += len(chunk)
                 last_data_time = time.time()
@@ -1517,7 +1535,8 @@ class OPS243Radar:
                     full_response = "".join(response_lines)
                     if '"Q"' in full_response:
                         break
-                time.sleep(0.02)
+                # Poll finely until the first byte so its timestamp is good to ~1 ms.
+                time.sleep(0.02 if bytes_received else 0.001)
 
         full_response = "".join(response_lines)
 
@@ -1986,7 +2005,10 @@ class OPS243Radar:
         return True
 
     def configure_for_rolling_buffer(
-        self, pre_trigger_segments: int = 16, sample_rate_ksps: int = 30
+        self,
+        pre_trigger_segments: int = 16,
+        sample_rate_ksps: int = 30,
+        transmit_power: int = 3,
     ):
         """
         Configure radar optimally for rolling buffer mode.
@@ -2005,7 +2027,8 @@ class OPS243Radar:
         Args:
             pre_trigger_segments: Number of pre-trigger segments (0-32).
                 Each segment = 128 samples = ~4.27ms at 30ksps.
-                Default 12 gives ~51ms pre-trigger, ~85ms post-trigger.
+                Default 16 gives ~68ms pre-trigger, ~68ms post-trigger.
+            transmit_power: Power level, 0 (max) to 7 (min). Default 3.
         """
         # Set units to MPH first
         self.set_units(SpeedUnit.MPH)
@@ -2014,8 +2037,8 @@ class OPS243Radar:
         # Reduced transmit power to avoid ADC saturation on close targets.
         # Level 0=max, 7=min. Rolling buffer captures raw I/Q at short range,
         # so max power clips the 12-bit ADC.
-        self.set_transmit_power(3)
-        logger.info("[OPS] Transmit power: level 3 (reduced to avoid clipping)")
+        self.set_transmit_power(transmit_power)
+        logger.info("[OPS] Transmit power: level %d (3 avoids clipping up close)", transmit_power)
 
         # Enter rolling buffer mode using the single source of truth
         self.enter_rolling_buffer_mode(

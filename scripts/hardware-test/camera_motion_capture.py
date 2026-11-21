@@ -23,7 +23,9 @@ without ever triggering on its own. --rig-setup-url follows the
 kiosk's Setup tab on every swing: the ball's apparent size and the case tilt go to
 the kiosk, and the geometry for that swing comes back. --status-to tells the kiosk
 when the radar is ready and when it is busy with a dump, so the Live screen can
-say Ready or Measuring.
+say Ready or Measuring. --ops243-club-speed (off until tested on the Pi) also
+dumps the OPS243 speed radar on every trigger the TI takes and sends its club
+speed when its ball speed agrees with the TI's (openflight/ops243_club_speed.py).
 """
 
 from __future__ import annotations
@@ -227,6 +229,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=Path.home() / ".config" / "openflight" / "camera-aim.json",
         help="Where the camera's straight line is kept",
     )
+    ops = parser.add_argument_group(
+        "OPS243 club speed",
+        "Every trigger the TI radar takes also dumps the OPS243's rolling buffer (S!); "
+        "its club speed goes to the kiosk when its ball speed agrees with the TI's and "
+        "the smash factor is physical (openflight/ops243_club_speed.py).",
+    )
+    ops.add_argument(
+        "--ops243-club-speed", action="store_true", help="Measure club speed with the OPS243"
+    )
+    ops.add_argument("--ops243-port", default="/dev/ttyAMA0", help="OPS243 serial port")
+    ops.add_argument(
+        "--ops243-pre-trigger-segments",
+        type=int,
+        default=16,
+        help="S#n: 4.27 ms segments kept from before the trigger, of 32 (default 16: 68/68 ms)",
+    )
+    ops.add_argument(
+        "--ops243-transmit-power", type=int, default=3, help="0 (max) to 7 (min); default 3"
+    )
     args = parser.parse_args(argv)
     if args.camera_focal_px <= 0:
         parser.error("--camera-focal-px must be positive")
@@ -238,6 +259,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--ball-height-m cannot be negative")
     if args.trigger == "sound" and not args.iwr6843:
         parser.error("--trigger sound drives the TI radar's capture; add --iwr6843")
+    if args.ops243_club_speed and not args.iwr6843:
+        parser.error("--ops243-club-speed checks the OPS ball against the TI's; add --iwr6843")
+    if not 1 <= args.ops243_pre_trigger_segments <= 32:
+        parser.error("--ops243-pre-trigger-segments must be 1-32")
+    if not 0 <= args.ops243_transmit_power <= 7:
+        parser.error("--ops243-transmit-power must be 0-7")
     return args
 
 
@@ -439,6 +466,9 @@ MAX_SIDEWAYS_DEG = 15.0
 # The swing's clip is measured a moment after it saves; the radar dump takes
 # seconds, so the camera's verdict is normally in first. Wait this long for it.
 CAMERA_CONFIRM_WAIT_S = 1.5
+# The OPS243's dump (1.8 s) normally lands before the TI's (2.4 s); when it is
+# still in flight, the shot waits this long for its club speed, then goes without.
+OPS_RESULT_WAIT_S = 1.0
 # A radar track cut short is kept, when the camera saw the ball leave, down to
 # this span (the radar's own floor is 15 ms; the 20% 5-iron swings of
 # 2026-11-15 gave clean 39-point tracks of 13-14 ms).
@@ -995,6 +1025,7 @@ class RadarWorker(threading.Thread):
         case_pitch: CasePitch | None = None,
         kiosk_status: KioskStatus | None = None,
         camera_launch: CameraLaunchReader | None = None,
+        ops_club_speed=None,
     ):
         super().__init__(name="radar-results", daemon=True)
         from openflight.iwr6843.monitor import (  # pylint: disable=import-outside-toplevel
@@ -1008,6 +1039,7 @@ class RadarWorker(threading.Thread):
         self.case_pitch = case_pitch
         self.kiosk_status = kiosk_status
         self.camera_launch = camera_launch
+        self.ops_club_speed = ops_club_speed
         self.tx_order = tx_order_from_config(args.iwr6843_config)
         self.results_path = outdir / "radar.jsonl"
         self.stop_event = threading.Event()
@@ -1135,6 +1167,32 @@ class RadarWorker(threading.Thread):
             print(f"RADAR #{capture.sequence}: launch analysis failed: {error}")
             return None
 
+    def add_club_speed(self, capture, measurement, payload, club, record: dict):
+        """The payload with the OPS243's club speed when its gates pass, else unchanged.
+
+        The OPS dump (1.8 s) is normally in before the TI's; this waits only
+        while this swing's own dump is still in flight, and not at all for a
+        swing with nothing to post. Whatever happens, the shot goes on.
+        """
+        ops = getattr(self, "ops_club_speed", None)
+        if ops is None:
+            return payload
+        ti_ball = ball_speed(measurement) if credible_ball(measurement) else None
+        try:
+            verdict = ops.verdict_for(
+                capture.trigger_timestamp,
+                ti_ball,
+                club=club,
+                wait_s=OPS_RESULT_WAIT_S if payload is not None else 0.0,
+            )
+        except Exception as error:  # pylint: disable=broad-exception-caught
+            print(f"OPS #{capture.sequence}: club speed check failed: {error}")
+            record["ops243"] = {"club_speed_mph": None, "reason": f"failed: {error}"}
+            return payload
+        record["ops243"] = verdict.to_record()
+        print(f"OPS #{capture.sequence}: {verdict.line()}")
+        return payload if payload is None else verdict.add_to(payload)
+
     def handle(self, capture) -> None:
         """Measure one capture, then tell the kiosk the radar is ready again."""
         result = "failed"
@@ -1216,6 +1274,7 @@ class RadarWorker(threading.Thread):
                     payload = camera_launch.apply(
                         capture, measurement, launch, payload, geometry, record
                     )
+                payload = self.add_club_speed(capture, measurement, payload, club, record)
                 result = "no_ball" if payload is None else "shot"
                 if self.args.post_to and payload is not None:
                     status = post_shot(self.args.post_to, payload)
@@ -1226,15 +1285,21 @@ class RadarWorker(threading.Thread):
         return result
 
 
-def radar_trigger(monitor, kiosk_status: KioskStatus | None) -> Callable[[float], bool]:
+def radar_trigger(
+    monitor, kiosk_status: KioskStatus | None, ops_club_speed=None
+) -> Callable[[float], bool]:
     """Freeze the radar on a swing and, when it took the trigger, start the wait on screen.
 
     A trigger that arrives while a dump is in flight is refused by the monitor
-    and changes nothing: the screen is already showing the wait.
+    and changes nothing: the screen is already showing the wait. A trigger the
+    TI takes also goes to the OPS243 (only queued there; its thread sends S!),
+    so the two radars dump on the same swings and are deaf at the same times.
     """
 
     def on_trigger(timestamp: float) -> bool:
         accepted = monitor.notify_trigger(timestamp)
+        if accepted and ops_club_speed is not None:
+            ops_club_speed.trigger(timestamp)
         if accepted and kiosk_status is not None:
             kiosk_status.measuring()
         return accepted
@@ -1242,7 +1307,9 @@ def radar_trigger(monitor, kiosk_status: KioskStatus | None) -> Callable[[float]
     return on_trigger
 
 
-def sound_trigger(worker_holder: dict, kiosk_status: KioskStatus | None) -> Callable[[float], None]:
+def sound_trigger(
+    worker_holder: dict, kiosk_status: KioskStatus | None, ops_club_speed=None
+) -> Callable[[float], None]:
     """Called for each sound edge the radar accepted: show the wait, save the clip.
 
     The radar refuses echoes within 0.1 s and anything while a dump is in
@@ -1251,6 +1318,8 @@ def sound_trigger(worker_holder: dict, kiosk_status: KioskStatus | None) -> Call
     """
 
     def on_edge(timestamp: float) -> None:
+        if ops_club_speed is not None:
+            ops_club_speed.trigger(timestamp)
         if kiosk_status is not None:
             kiosk_status.measuring()
         worker = worker_holder.get("worker")
@@ -1305,6 +1374,23 @@ def start_radar(
     return monitor, calibration
 
 
+def start_ops243(args: argparse.Namespace, session_dir: Path):
+    """Start the OPS243 club-speed worker. It connects in the background; a
+    missing or silent radar prints one warning and the recorder runs on."""
+    # pylint: disable=import-outside-toplevel
+    from openflight.ops243_club_speed import OPS243ClubSpeed
+
+    ops = OPS243ClubSpeed(
+        args.ops243_port,
+        pre_trigger_segments=args.ops243_pre_trigger_segments,
+        transmit_power=args.ops243_transmit_power,
+        save_path=session_dir / "ops243.jsonl",
+    )
+    ops.start()
+    print(f"OPS243 club speed: connecting on {args.ops243_port}")
+    return ops
+
+
 def describe(capture) -> str:
     meta = capture.metadata or {}
     return (
@@ -1340,7 +1426,7 @@ def main(argv: list[str] | None = None) -> int:
         trigger = BallLeavesTrigger(motion_settings)
     else:
         trigger = MotionTrigger(motion_settings)
-    radar_monitor = radar_worker = ball_sizes = kiosk_status = None
+    radar_monitor = radar_worker = ball_sizes = kiosk_status = ops_club_speed = None
     worker_holder: dict[str, TriggerWorker] = {}
     sound = args.trigger == "sound"
     if args.iwr6843:
@@ -1348,10 +1434,14 @@ def main(argv: list[str] | None = None) -> int:
             kiosk_status = KioskStatus(
                 args.status_to, dump_s=dump_seconds_from_config(args.iwr6843_config)
             )
+        if args.ops243_club_speed:
+            ops_club_speed = start_ops243(args, session_dir)
         radar_monitor, calibration = start_radar(
             args,
             session_dir,
-            trigger_observers=[sound_trigger(worker_holder, kiosk_status)] if sound else None,
+            trigger_observers=(
+                [sound_trigger(worker_holder, kiosk_status, ops_club_speed)] if sound else None
+            ),
         )
         ball_sizes = BallSizes()
         camera_launch = None
@@ -1375,6 +1465,7 @@ def main(argv: list[str] | None = None) -> int:
             case_pitch=CasePitch(args.pitch_axis) if args.pitch_axis else None,
             kiosk_status=kiosk_status,
             camera_launch=camera_launch,
+            ops_club_speed=ops_club_speed,
         )
         geometry = "no --tee-m: ball speed only" if args.tee_m is None else f"tee {args.tee_m} m"
         print(f"TI radar armed on {radar_monitor.port} ({geometry})")
@@ -1399,7 +1490,9 @@ def main(argv: list[str] | None = None) -> int:
         outdir=session_dir,
         calibrate=args.calibrate,
         on_trigger=(
-            radar_trigger(radar_monitor, kiosk_status) if radar_monitor and not sound else None
+            radar_trigger(radar_monitor, kiosk_status, ops_club_speed)
+            if radar_monitor and not sound
+            else None
         ),
         motion_triggers=not sound,
         gate_state=(lambda: radar_monitor.trigger_input_active) if sound else None,
@@ -1456,6 +1549,8 @@ def main(argv: list[str] | None = None) -> int:
             radar_worker.join(timeout=2.0)
         if radar_monitor is not None:
             radar_monitor.stop()
+        if ops_club_speed is not None:
+            ops_club_speed.stop()
         if kiosk_status is not None:
             kiosk_status.close()
     print(f"{saved} clip(s), {worker.triggers} trigger(s), {worker.dropped} frame(s) dropped")

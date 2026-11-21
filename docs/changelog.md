@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **OPS243 club speed on the camera trigger (`--ops243-club-speed`, off by
+  default until tested on the Pi).** Every trigger the recorder's TI radar
+  takes also sends the OPS243 a software trigger (`S!`) in rolling-buffer mode
+  (`S#16`: 68 ms kept before the trigger, 68 ms after; the camera's trigger
+  lands ~4-10 ms after impact, where the sound trigger used to). The dump goes
+  through the production processor, and its club speed reaches the kiosk as
+  `club_speed_mph` with `club_speed_source: "ops243"` only when the OPS ball
+  speed is within max(4 mph, 5%) of the TI's and the smash factor is 1.0-1.6.
+  A missing or silent OPS243 prints one warning and the recorder runs on.
+  Every dump is saved to the session's `ops243.jsonl` for replay
+  (openflight/ops243_club_speed.py).
 - **`--trigger ball` for the camera recorder (temporary, until the OPS243).**
   The motion trigger also fires on a waggle over the ball, and each trigger
   costs the TI radar a ~2.5 s readout, so a swing a second later went
